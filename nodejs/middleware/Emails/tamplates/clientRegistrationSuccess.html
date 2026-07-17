@@ -1,0 +1,58 @@
+<html>
+  <body style="margin:0;padding:0;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif;">
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f3f4f6;padding:24px 0;">
+      <tr>
+        <td align="center">
+          <table width="600" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 4px 12px rgba(15,23,42,0.08);">
+            <tr>
+              <td style="background:{{brand.primary}};padding:16px 24px;color:#ffffff;text-align:center;">
+                <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <td style="font-size:18px;font-weight:bold;letter-spacing:0.02em;">{{brand.name}}</td>
+                    <td align="right">
+                      <img src="{{brand.logoUrl}}" alt="{{brand.name}}"
+                        style="display:block;margin:0 auto;max-width:150px;height:auto;background:#ffffff;padding:10px 12px;border-radius:8px;" />
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:24px;color:#111827;font-size:14px;line-height:1.6;">
+                <p style="margin:0 0 12px 0;font-weight:600;">New Client Added</p>
+                <p style="margin:0 0 12px 0;">Dear {{companyowner}},</p>
+                <p style="margin:0 0 12px 0;">a new client has been added to your CRM. Here are the details:</p>
+                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px;">
+                  <tr>
+                    <td style="width:140px;color:#6b7280;padding:4px 0;">Name</td>
+                    <td style="color:#111827;padding:4px 0;"><strong>{{name}}</strong></td>
+                  </tr>
+                  <tr>
+                    <td style="width:140px;color:#6b7280;padding:4px 0;">Email</td>
+                    <td style="color:#111827;padding:4px 0;">{{email}}</td>
+                  </tr>
+                  <tr>
+                    <td style="width:140px;color:#6b7280;padding:4px 0;">Contact</td>
+                    <td style="color:#111827;padding:4px 0;">{{mobile}}</td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:0 24px 24px 24px;" align="center">
+                <a href="{{brand.portalUrl}}" style="display:inline-block;padding:10px 22px;background:{{brand.accent}};color:#ffffff;text-decoration:none;border-radius:999px;font-size:14px;font-weight:600;" target="_blank">Open CRM Portal</a>
+                <div style="font-size:12px;color:#6b7280;margin-top:6px;">Or paste this link: <span style="color:{{brand.accent}};word-break:break-all;">{{brand.portalUrl}}</span></div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:12px 24px 20px 24px;color:#9ca3af;font-size:12px;border-top:1px solid #e5e7eb;">
+                <p style="margin:0 0 4px 0;">Best Regards,</p>
+                <p style="margin:0;font-weight:600;color:#6b7280;">{{brand.name}}</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

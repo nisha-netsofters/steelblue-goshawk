@@ -1,0 +1,38 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# testing
+/coverage
+
+# production
+/build
+
+# secrets
+.env
+.env.*
+!.env.example
+
+# uploads & temp (server-generated)
+uploads/
+tmp/
+
+# logs
+*.log
+stderr.log
+console.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OCR data (large binary)
+eng.traineddata
+
+# misc
+.DS_Store
+.docz
+.eslintcache
+.vscode
