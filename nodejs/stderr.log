@@ -1,0 +1,136 @@
+/home/u387173212/domains/steelblue-goshawk-113691.hostingersite.com/nodejs/node_modules/razorpay/dist/razorpay.js:34
+      throw new Error('`key_id` or `oauthToken` is mandatory');
+      ^
+
+Error: `key_id` or `oauthToken` is mandatory
+    at new Razorpay (/home/u387173212/domains/steelblue-goshawk-113691.hostingersite.com/nodejs/node_modules/razorpay/dist/razorpay.js:34:13)
+    at Object.<anonymous> (/home/u387173212/domains/steelblue-goshawk-113691.hostingersite.com/nodejs/controllerV2/payments.js:12:18)
+    at Module._compile (node:internal/modules/cjs/loader:1688:14)
+    at Module._extensions..js (node:internal/modules/cjs/loader:1820:10)
+    at Module.load (node:internal/modules/cjs/loader:1423:32)
+    at Module._load (node:internal/modules/cjs/loader:1246:12)
+    at TracingChannel.traceSync (node:diagnostics_channel:322:14)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:235:24)
+    at Module.require (node:internal/modules/cjs/loader:1445:12)
+    at require (node:internal/modules/helpers:135:16)
+
+Node.js v22.18.0
+/home/u387173212/domains/steelblue-goshawk-113691.hostingersite.com/nodejs/node_modules/razorpay/dist/razorpay.js:34
+      throw new Error('`key_id` or `oauthToken` is mandatory');
+      ^
+
+Error: `key_id` or `oauthToken` is mandatory
+    at new Razorpay (/home/u387173212/domains/steelblue-goshawk-113691.hostingersite.com/nodejs/node_modules/razorpay/dist/razorpay.js:34:13)
+    at Object.<anonymous> (/home/u387173212/domains/steelblue-goshawk-113691.hostingersite.com/nodejs/controllerV2/payments.js:12:18)
+    at Module._compile (node:internal/modules/cjs/loader:1688:14)
+    at Module._extensions..js (node:internal/modules/cjs/loader:1820:10)
+    at Module.load (node:internal/modules/cjs/loader:1423:32)
+    at Module._load (node:internal/modules/cjs/loader:1246:12)
+    at TracingChannel.traceSync (node:diagnostics_channel:322:14)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:235:24)
+    at Module.require (node:internal/modules/cjs/loader:1445:12)
+    at require (node:internal/modules/helpers:135:16)
+
+Node.js v22.18.0
+/home/u387173212/domains/steelblue-goshawk-113691.hostingersite.com/nodejs/node_modules/razorpay/dist/razorpay.js:34
+      throw new Error('`key_id` or `oauthToken` is mandatory');
+      ^
+
+Error: `key_id` or `oauthToken` is mandatory
+    at new Razorpay (/home/u387173212/domains/steelblue-goshawk-113691.hostingersite.com/nodejs/node_modules/razorpay/dist/razorpay.js:34:13)
+    at Object.<anonymous> (/home/u387173212/domains/steelblue-goshawk-113691.hostingersite.com/nodejs/controllerV2/payments.js:12:18)
+    at Module._compile (node:internal/modules/cjs/loader:1688:14)
+    at Module._extensions..js (node:internal/modules/cjs/loader:1820:10)
+    at Module.load (node:internal/modules/cjs/loader:1423:32)
+    at Module._load (node:internal/modules/cjs/loader:1246:12)
+    at TracingChannel.traceSync (node:diagnostics_channel:322:14)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:235:24)
+    at Module.require (node:internal/modules/cjs/loader:1445:12)
+    at require (node:internal/modules/helpers:135:16)
+
+Node.js v22.18.0
+/home/u387173212/domains/steelblue-goshawk-113691.hostingersite.com/nodejs/node_modules/razorpay/dist/razorpay.js:34
+      throw new Error('`key_id` or `oauthToken` is mandatory');
+      ^
+
+Error: `key_id` or `oauthToken` is mandatory
+    at new Razorpay (/home/u387173212/domains/steelblue-goshawk-113691.hostingersite.com/nodejs/node_modules/razorpay/dist/razorpay.js:34:13)
+    at Object.<anonymous> (/home/u387173212/domains/steelblue-goshawk-113691.hostingersite.com/nodejs/controllerV2/payments.js:12:18)
+    at Module._compile (node:internal/modules/cjs/loader:1688:14)
+    at Module._extensions..js (node:internal/modules/cjs/loader:1820:10)
+    at Module.load (node:internal/modules/cjs/loader:1423:32)
+    at Module._load (node:internal/modules/cjs/loader:1246:12)
+    at TracingChannel.traceSync (node:diagnostics_channel:322:14)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:235:24)
+    at Module.require (node:internal/modules/cjs/loader:1445:12)
+    at require (node:internal/modules/helpers:135:16)
+
+Node.js v22.18.0
+/home/u387173212/domains/steelblue-goshawk-113691.hostingersite.com/nodejs/node_modules/razorpay/dist/razorpay.js:34
+      throw new Error('`key_id` or `oauthToken` is mandatory');
+      ^
+
+Error: `key_id` or `oauthToken` is mandatory
+    at new Razorpay (/home/u387173212/domains/steelblue-goshawk-113691.hostingersite.com/nodejs/node_modules/razorpay/dist/razorpay.js:34:13)
+    at Object.<anonymous> (/home/u387173212/domains/steelblue-goshawk-113691.hostingersite.com/nodejs/controllerV2/payments.js:12:18)
+    at Module._compile (node:internal/modules/cjs/loader:1688:14)
+    at Module._extensions..js (node:internal/modules/cjs/loader:1820:10)
+    at Module.load (node:internal/modules/cjs/loader:1423:32)
+    at Module._load (node:internal/modules/cjs/loader:1246:12)
+    at TracingChannel.traceSync (node:diagnostics_channel:322:14)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:235:24)
+    at Module.require (node:internal/modules/cjs/loader:1445:12)
+    at require (node:internal/modules/helpers:135:16)
+
+Node.js v22.18.0
+/home/u387173212/domains/steelblue-goshawk-113691.hostingersite.com/nodejs/node_modules/razorpay/dist/razorpay.js:34
+      throw new Error('`key_id` or `oauthToken` is mandatory');
+      ^
+
+Error: `key_id` or `oauthToken` is mandatory
+    at new Razorpay (/home/u387173212/domains/steelblue-goshawk-113691.hostingersite.com/nodejs/node_modules/razorpay/dist/razorpay.js:34:13)
+    at Object.<anonymous> (/home/u387173212/domains/steelblue-goshawk-113691.hostingersite.com/nodejs/controllerV2/payments.js:12:18)
+    at Module._compile (node:internal/modules/cjs/loader:1688:14)
+    at Module._extensions..js (node:internal/modules/cjs/loader:1820:10)
+    at Module.load (node:internal/modules/cjs/loader:1423:32)
+    at Module._load (node:internal/modules/cjs/loader:1246:12)
+    at TracingChannel.traceSync (node:diagnostics_channel:322:14)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:235:24)
+    at Module.require (node:internal/modules/cjs/loader:1445:12)
+    at require (node:internal/modules/helpers:135:16)
+
+Node.js v22.18.0
+/home/u387173212/domains/steelblue-goshawk-113691.hostingersite.com/nodejs/node_modules/razorpay/dist/razorpay.js:34
+      throw new Error('`key_id` or `oauthToken` is mandatory');
+      ^
+
+Error: `key_id` or `oauthToken` is mandatory
+    at new Razorpay (/home/u387173212/domains/steelblue-goshawk-113691.hostingersite.com/nodejs/node_modules/razorpay/dist/razorpay.js:34:13)
+    at Object.<anonymous> (/home/u387173212/domains/steelblue-goshawk-113691.hostingersite.com/nodejs/controllerV2/payments.js:12:18)
+    at Module._compile (node:internal/modules/cjs/loader:1688:14)
+    at Module._extensions..js (node:internal/modules/cjs/loader:1820:10)
+    at Module.load (node:internal/modules/cjs/loader:1423:32)
+    at Module._load (node:internal/modules/cjs/loader:1246:12)
+    at TracingChannel.traceSync (node:diagnostics_channel:322:14)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:235:24)
+    at Module.require (node:internal/modules/cjs/loader:1445:12)
+    at require (node:internal/modules/helpers:135:16)
+
+Node.js v22.18.0
+/home/u387173212/domains/steelblue-goshawk-113691.hostingersite.com/nodejs/node_modules/razorpay/dist/razorpay.js:34
+      throw new Error('`key_id` or `oauthToken` is mandatory');
+      ^
+
+Error: `key_id` or `oauthToken` is mandatory
+    at new Razorpay (/home/u387173212/domains/steelblue-goshawk-113691.hostingersite.com/nodejs/node_modules/razorpay/dist/razorpay.js:34:13)
+    at Object.<anonymous> (/home/u387173212/domains/steelblue-goshawk-113691.hostingersite.com/nodejs/controllerV2/payments.js:12:18)
+    at Module._compile (node:internal/modules/cjs/loader:1688:14)
+    at Module._extensions..js (node:internal/modules/cjs/loader:1820:10)
+    at Module.load (node:internal/modules/cjs/loader:1423:32)
+    at Module._load (node:internal/modules/cjs/loader:1246:12)
+    at TracingChannel.traceSync (node:diagnostics_channel:322:14)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:235:24)
+    at Module.require (node:internal/modules/cjs/loader:1445:12)
+    at require (node:internal/modules/helpers:135:16)
+
+Node.js v22.18.0
