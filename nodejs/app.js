@@ -24,6 +24,7 @@ const allowedOrigins = [
   process.env.FRONTEND_APP_URL,
   "https://peachpuff-snail-327679.hostingersite.com",
   "http://localhost:3000",
+  "http://127.0.0.1:3000",
 ].filter(Boolean);
 
 app.use(
@@ -51,9 +52,17 @@ app.use(
 
 app.options("*", cors());
 
-app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", message: "API is running" });
-});
+const healthHandler = (req, res) => {
+  res.json({
+    status: "ok",
+    message: "API is running",
+    env: process.env.NODE_ENV || "development",
+    time: new Date().toISOString(),
+  });
+};
+
+app.get("/api/health", healthHandler);
+app.get("/health", healthHandler);
 
 app.use(bodyParser.json());
 app.use(
