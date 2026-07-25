@@ -201,7 +201,9 @@ const hasNonEmpty = (value) =>
   typeof value === "string" && value.trim().length > 0 && !value.includes("•");
 
 /**
- * Resume auto-extract is allowed only when Super Admin OCR + AI are fully set.
+ * Resume auto-extract is allowed when Super Admin AI is fully set.
+ * OCR is optional: PDF uses pdf-parse; images fall back to built-in Tesseract
+ * when no cloud OCR provider is configured (same as resumeParser.js).
  */
 const getResumeExtractionStatus = async () => {
   const config = await getApiIntegrationConfig();
@@ -214,9 +216,12 @@ const getResumeExtractionStatus = async () => {
   const ocrProvider = config?.ocr?.providers?.[ocrProviderKey];
 
   if (!ocrEnabled) {
-    missing.push("OCR service is not enabled");
+    // Built-in Tesseract fallback — do not block resume extraction
+    ocrConfigured = true;
   } else if (!ocrProvider?.isEnabled) {
     missing.push("Active OCR provider is not configured");
+  } else if (ocrProviderKey === "tesseract") {
+    ocrConfigured = true;
   } else if (ocrProviderKey === "google_vision" && !hasNonEmpty(ocrProvider.apiKey)) {
     missing.push("Google Vision API Key is not set");
   } else if (
@@ -260,7 +265,7 @@ const getResumeExtractionStatus = async () => {
     missing,
     ocr: {
       enabled: ocrEnabled,
-      provider: ocrProviderKey || null,
+      provider: ocrEnabled ? ocrProviderKey || null : "tesseract_fallback",
       configured: ocrConfigured,
     },
     ai: {
