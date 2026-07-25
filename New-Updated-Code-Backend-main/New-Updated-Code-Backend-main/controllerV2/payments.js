@@ -1,13 +1,14 @@
-const Payments = require("../models/Payments");
+const Payments = require("../models-v2/payments_Mongoose");
 const Razorpay = require("razorpay");
 const fs = require("fs");
-const Clients = require("../models/Clients");
-const Subscriptions = require("../models/Subscriptions");
-const Plans = require("../models/Plan");
-const PlanFeatures = require("../models/PlanFeatures");
-const User = require("../models/User");
+const Clients = require("../models-v2/clients_Mongoose");
+const Subscriptions = require("../models-v2/subscriptions_Mongoose");
+const Plans = require("../models-v2/plans_Mongoose");
+const PlanFeatures = require("../models-v2/planFeatures_Mongoose");
+const User = require("../models-v2/users_Mongoose");
 const { paymentSuccessfulMail } = require("../middleware/Emails/email");
 const { enqueueEmailJob } = require("../mq/emailProducer");
+const Agency = require("../models-v2/agency_Mongooes");
 
 let razorpayInstance;
 const getRazorpay = () => {
@@ -27,7 +28,11 @@ const getRazorpay = () => {
 
 exports.getAllPayments = async (req, res) => {
   try {
-    const payments = await Payments.query();
+    const payments = await Payments.aggregate([
+      {
+        $sort: { createdAt: -1 },
+      },
+    ]);
     res.status(200).json(payments);
   } catch (error) {
     console.info("----------------------------");
@@ -40,32 +45,38 @@ exports.getAllPayments = async (req, res) => {
 exports.createRazorpayOrder = async (req, res) => {
   try {
     const options = req.body;
-
-const client = await Clients.query().findById(options?.notes?.clientId)
-let razorpay_custId = client?.razorpay_custId;
+    const client = await Clients.find({ id: options?.notes?.clientId });
+    let razorpay_custId = client?.razorpay_custId;
     if (client.razorpay_custId == null) {
-    const razorpay_customer = await getRazorpay().customers.create({
-      name: client?.companyowner,
-      contact: client?.mobile,
-      email: client?.email,
-      notes: {
-        userId: client?.userId,
-        companyName: client?.companyName,
-        city: client?.city
+      const razorpay_customer = await getRazorpay().customers.create({
+        name: client?.companyowner,
+        contact: client?.mobile,
+        email: client?.email,
+        notes: {
+          userId: client?.userId,
+          companyName: client?.companyName,
+          city: client?.city,
+        },
+      });
+      razorpay_custId = razorpay_customer?.id;
+      await Clients.updateOne(
+        { id: client?.id },
+        { $set: { razorpay_custId: razorpay_customer?.id } }
+      );
+      // .patch({ razorpay_custId: razorpay_customer?.id })
+      // .findById(client?.id);
+    }
+    await getRazorpay().orders.create(
+      { ...options, customer_id: razorpay_custId },
+      async function (err, order) {
+        if (err) {
+          return res.status(500).json({
+            message: "Something Went Wrong",
+          });
+        }
+        return res.status(200).json(order);
       }
-    })
-    razorpay_custId = razorpay_customer?.id
-  await Clients.query().patch({razorpay_custId: razorpay_customer?.id}).findById(client?.id)
-    } 
-    await getRazorpay().orders.create({...options, customer_id: razorpay_custId}, async function (err, order) {
-      if (err) {
-        return res.status(500).json({
-          message: "Something Went Wrong",
-        });
-      }
-      return res.status(200).json(order);
-    });
-  
+    );
   } catch (err) {
     console.info("----------------------------");
     console.info("err =>", err);
@@ -101,7 +112,7 @@ exports.webHookPayment = async (req, res) => {
     if (object?.payload?.payment.entity) {
       const data = object?.payload?.payment.entity;
       const paymentObj = {
-        userId : data?.notes?.userId,
+        userId: data?.notes?.userId,
         paymentId: data?.id,
         entity: data?.entity,
         amount: data?.amount / 100,
@@ -122,23 +133,28 @@ exports.webHookPayment = async (req, res) => {
         error_source: data?.error_source,
         error_step: data?.error_step,
         error_reason: data?.error_reason,
-        customerId: data?.notes?.customerId
-      }
-      const paymentData =  await Payments.query().insertAndFetch(paymentObj)
-      const planData = await Plans.query().findById(data?.notes?.planId)
-      const planFeaturesData = await PlanFeatures.query().findById(planData?.plan_feature_id)
-  
+        customerId: data?.notes?.customerId,
+      };
+      const paymentData = await Payments.create(paymentObj);
+      const planData = await Plans.find({ id: data?.notes?.planId });
+      const planFeaturesData = await PlanFeatures.find({
+        id: planData?.plan_feature_id,
+      });
+
       const subscriptionObj = {
-        planId : data?.notes?.planId,
+        planId: data?.notes?.planId,
         userId: data?.notes?.userId,
         payment_id: paymentData?.id,
         active_plan: true,
         resume_download_count: -1,
         interview_request_count: -1,
-        timeDuration: planFeaturesData?.validate_days
-      }
-     const subsciptionData = await Subscriptions.query().insertAndFetch(subscriptionObj)
-    await User.query().update({ subscriptionId: subsciptionData?.id }).where('id', data?.notes?.userId)
+        timeDuration: planFeaturesData?.validate_days,
+      };
+      const subsciptionData = await Subscriptions.create(subscriptionObj);
+      await User.update(
+        { id: data?.notes?.userId },
+        { subscriptionId: subsciptionData?.id }
+      );
     }
     return res.json({
       status: "ok",
@@ -169,24 +185,48 @@ exports.webHookOrder = async (req, res) => {
 exports.paymentMail = async (req, res) => {
   try {
     const id = req.params.id;
-    const clientData = await Clients.query().findById(id)
-    let paymentData = await Payments.query()
-    .where("userId", "=", clientData?.userId)
-    .orderBy("created_at", "desc")
-    .first();
+    const clientData = await Clients.findOne({ id: id });
+    const agencyId = req.headers["agencyid"];
+    const agency = await Agency.findOne({ id: agencyId });
+    let paymentData = await Payments.aggregate([
+      {
+        $sort: { createdAt: -1 },
+      },
+      { $match: { userId: clientData?.userId } },
+      {
+        $limit: 1,
+      },
+    ]);
+    if (paymentData.length > 0) {
+      paymentData = paymentData[0];
+    }
 
     const notesObject = JSON.parse(paymentData?.notes);
     const planId = notesObject?.planId;
 
-    let planData = await Plans.query().findById(planId)
-    .withGraphFetched('planFeature')
-   await enqueueEmailJob("paymentSuccessful", {
-     clientData,
-     paymentData,
-     planData,
-     agencyName: "", // legacy path – template can ignore if not provided
-   })
-    res.status(200).json({msg: "success"});
+    let planData = await Plans.aggregate([
+      {
+        $match: { id: planId },
+      },
+      {
+        $lookup: {
+          from: "plan_features",
+          localField: "plan_feature_id",
+          foreignField: "id",
+          as: "planFeature",
+        },
+      },
+    ]);
+    if (planData.length > 0) {
+      planData = planData[0];
+    }
+    await enqueueEmailJob("paymentSuccessful", {
+      clientData,
+      paymentData,
+      planData,
+      agencyName: agency.name,
+    });
+    res.status(200).json({ msg: "success" });
   } catch (err) {
     console.info("----------------------------");
     console.info("err =>", err);
