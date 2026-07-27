@@ -1187,6 +1187,27 @@ exports.getCandidates = async (req, res) => {
         $unset: "updatedAt",
       },
       {
+        $lookup: {
+          from: "savedCandidates",
+          localField: "id",
+          foreignField: "candidateId",
+          as: "savedCandidates",
+          pipeline: [
+            {
+              $match: {
+                userId: String(userId2),
+                ...(agencyId ? { agencyId: String(agencyId) } : {}),
+              },
+            },
+          ],
+        },
+      },
+      {
+        $addFields: {
+          savedCandidates: { $arrayElemAt: ["$savedCandidates", 0] },
+        },
+      },
+      {
         $project: { viewCandidates: 0 },
       },
     ]);

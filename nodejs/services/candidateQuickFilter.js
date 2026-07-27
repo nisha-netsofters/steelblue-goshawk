@@ -3,7 +3,8 @@
  * Maps UI tab ids to Mongo match stages / early document filters.
  */
 
-const RECENT_DAYS = 7;
+const RECENTLY_ADDED_DAYS = 30;
+const RECENTLY_EDITED_DAYS = 30;
 
 const IN_PROCESS_STATUSES = [
   "shortlisted",
@@ -22,8 +23,8 @@ const STATUS_QUICK_FILTERS = [
   "hold",
 ];
 
-const getRecentDate = () =>
-  new Date(Date.now() - RECENT_DAYS * 24 * 60 * 60 * 1000);
+const getDaysAgo = (days) =>
+  new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
 /**
  * Early $match on candidates collection (date-based tabs only).
@@ -32,23 +33,9 @@ const getRecentDate = () =>
 function getQuickFilterEarlyMatch(quickFilter) {
   if (!quickFilter) return {};
 
-  const recentDate = getRecentDate();
-
   switch (quickFilter) {
     case "recentlyAdded":
-      return { createdAt: { $gte: recentDate } };
-
-    case "recentlyActive":
-      return {
-        $or: [
-          { updatedAt: { $gte: recentDate } },
-          {
-            interviewStatusUpdate: {
-              $gte: recentDate.toISOString(),
-            },
-          },
-        ],
-      };
+      return { createdAt: { $gte: getDaysAgo(RECENTLY_ADDED_DAYS) } };
 
     default:
       return {};
@@ -122,9 +109,16 @@ function getQuickFilterPostViewStages(quickFilter, userId, agencyId) {
     });
   }
 
+  // New Candidates: never-viewed ("new") OR recently edited profiles
   if (quickFilter === "newCandidates") {
+    const editedSince = getDaysAgo(RECENTLY_EDITED_DAYS);
     stages.push({
-      $match: { status: "new" },
+      $match: {
+        $or: [
+          { status: "new" },
+          { updatedAt: { $gte: editedSince } },
+        ],
+      },
     });
   }
 
@@ -201,7 +195,8 @@ function getInterviewStatusStages(agencyId, quickFilter) {
 }
 
 module.exports = {
-  RECENT_DAYS,
+  RECENTLY_ADDED_DAYS,
+  RECENTLY_EDITED_DAYS,
   IN_PROCESS_STATUSES,
   STATUS_QUICK_FILTERS,
   getQuickFilterEarlyMatch,

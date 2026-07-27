@@ -1042,6 +1042,42 @@ exports.getJobApplicants = async (req, res) => {
     page = parseInt(page) || 1;
     perPage = parseInt(perPage) || 10;
 
+    // Backfill: candidates created from Applied page may have jobOpeningId
+    // on the candidate doc without a JobApplication row
+    try {
+      const linkedCandidates = await Candidates.find({
+        jobOpeningId: String(jobOpeningId),
+      }).select("id");
+      const clientWhoPostedJob = await Clients.findOne({
+        userId: jobOpening.userId,
+      });
+      const clientId = clientWhoPostedJob?.id || jobOpening.clientId || null;
+      if (clientId && linkedCandidates?.length) {
+        for (const cand of linkedCandidates) {
+          const exists = await JobApplication.findOne({
+            jobOpeningId: String(jobOpeningId),
+            candidateId: String(cand.id),
+          });
+          if (!exists) {
+            const appId = new mongoose.Types.ObjectId();
+            await JobApplication.create({
+              id: appId,
+              _id: appId,
+              jobOpeningId: String(jobOpeningId),
+              candidateId: String(cand.id),
+              clientId: String(clientId),
+              status: "applied",
+            });
+          }
+        }
+      }
+    } catch (backfillErr) {
+      console.error(
+        "getJobApplicants backfill error =>",
+        backfillErr?.message || backfillErr
+      );
+    }
+
     const applicantsAggregate = await JobApplication.aggregate([
       { $match: { jobOpeningId: jobOpeningId } },
       {

@@ -22,7 +22,10 @@ const {
   candidateJobMatching,
   getSingleCandidateDetails,
 } = require("../controllerV2/candidate");
-const { SavedCandidate } = require("../controllerV2/saved_Candidates");
+const {
+  SavedCandidate,
+  toggleFavoriteCandidate,
+} = require("../controllerV2/saved_Candidates");
 
 router.post("/candidate/create", verifyAuth, createCandidates);
 router.post("/candidate/create/csv", createCandidatesCsvFile);
@@ -49,6 +52,7 @@ router.get("/candidate/profile", verifyAuth, getSingleCandidateDetails);
 //public Routes
 router.post("/candidate/publicCreate", createCandidates);
 router.post("/candidate/savedcandidate", verifyAuth, SavedCandidate);
+router.post("/candidate/toggle-favorite", verifyAuth, toggleFavoriteCandidate);
 router.get(
   "/candidate/statistics",
   verifyAuth,

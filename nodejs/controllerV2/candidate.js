@@ -766,6 +766,45 @@ exports.createCandidates = async (req, res) => {
           );
         }
       }
+
+      // Applied Candidates page: link new candidate to the job so it shows in applicants list
+      if (jobOpening?.id && responce?.id) {
+        try {
+          const clientWhoPostedJob = await Clients.findOne({
+            userId: jobOpening.userId,
+          });
+          const clientId =
+            clientWhoPostedJob?.id || jobOpening.clientId || null;
+          if (clientId) {
+            const existingApplication = await JobApplication.findOne({
+              jobOpeningId: String(jobOpening.id),
+              candidateId: String(responce.id),
+            });
+            if (!existingApplication) {
+              const appId = new mongoose.Types.ObjectId();
+              await JobApplication.create({
+                id: appId,
+                _id: appId,
+                jobOpeningId: String(jobOpening.id),
+                candidateId: String(responce.id),
+                clientId: String(clientId),
+                status: "applied",
+              });
+            }
+          } else {
+            console.error(
+              "createCandidates: JobApplication skipped — clientId not found for job",
+              jobOpening.id
+            );
+          }
+        } catch (jobAppErr) {
+          console.error(
+            "createCandidates: JobApplication create failed =>",
+            jobAppErr?.message || jobAppErr
+          );
+        }
+      }
+
       res.send(responce);
     });
   } catch (err) {
@@ -1506,6 +1545,27 @@ exports.getCandidates = async (req, res) => {
       },
       {
         $unset: "updatedAt",
+      },
+      {
+        $lookup: {
+          from: "savedCandidates",
+          localField: "id",
+          foreignField: "candidateId",
+          as: "savedCandidates",
+          pipeline: [
+            {
+              $match: {
+                userId: String(userId2),
+                ...(agencyId ? { agencyId: String(agencyId) } : {}),
+              },
+            },
+          ],
+        },
+      },
+      {
+        $addFields: {
+          savedCandidates: { $arrayElemAt: ["$savedCandidates", 0] },
+        },
       },
       {
         $project: { viewCandidates: 0 },
