@@ -5,7 +5,7 @@ const { default: mongoose } = require("mongoose");
 const interviewStatus = require("../models-v2/interviewStatus_Mongoose");
 
 exports.createInterviews = async (req, res) => {
-  const data = req.body;
+  const data = { ...(req.body || {}) };
   const agencyId = req.headers["agencyid"];
   const userId2 = req.headers.userid;
 
@@ -23,42 +23,44 @@ exports.createInterviews = async (req, res) => {
     req.body.onBoardingId
   );
   delete data?.interviewStatus;
-  const interview = await Interviews.create({
-    id: objectid,
-    _id: objectid,
-    agencyId: agencyId,
-    ...data,
-  });
+  const interviewUserId = data?.userId || userId2;
+  delete data?.id;
+  delete data?._id;
+  delete data?.agencyId;
+  delete data?.userId;
+  delete data?.isdeleted;
+
   try {
-    await Candidate.updateOne(
-      { id: data?.candidateId },
-      {
-        $set: {
-          interviews: await Interviews.findOne({ id: objectid }),
-          interviewStatus,
-          interviewerId: data?.userId,
-          interviewStatusUpdate: new Date().toISOString(),
-        },
-      }
-    );
-    res.json(interview);
+    const interview = await Interviews.create({
+      ...data,
+      id: objectid,
+      _id: objectid,
+      agencyId: agencyId,
+      userId: interviewUserId,
+      isdeleted: 0,
+    });
+
+    try {
+      await Candidate.updateOne(
+        { id: data?.candidateId },
+        {
+          $set: {
+            interviews: await Interviews.findOne({ id: objectid }),
+            interviewStatus,
+            interviewerId: interviewUserId,
+            interviewStatusUpdate: new Date().toISOString(),
+          },
+        }
+      );
+    } catch (candidateErr) {
+      console.log("interview create candidate update err", candidateErr);
+    }
+
+    return res.json(interview);
   } catch (error) {
     console.log("interview create err", error);
+    return res.status(500).json({ error: "Failed to create interview" });
   }
-
-  // await Interviews.query()
-  //   .insert(data)
-  //   .then((r) => {
-  //     Candidate.query()
-  // .update({
-  //   interviewStatus,
-  //   interviewerId: data?.userId,
-  //   interviewStatusUpdate: new Date().toISOString(),
-  // })
-  //       .where('id', data?.candidateId)
-  //       .then(res.json(r))
-  //   })
-  //   .catch((err) => console.log('interview create err', err))
 };
 
 async function interviewStatuscreate(
