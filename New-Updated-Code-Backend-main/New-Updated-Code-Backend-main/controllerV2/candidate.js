@@ -87,10 +87,10 @@ exports.getCandidateSelfStatistics = async (req, res) => {
         ...(agencyId ? { agencyId } : {}),
       };
 
-    // Only fetch fields that we actually use
+    // Fields required for profile completeness must match services/profileCompleteness.js
     const candidate = await Candidates.findOne(candidateQuery)
       .select(
-        "id userId agencyId firstname lastname mobile email city resume professional industries_relation jobOpeningId"
+        "id userId agencyId firstname lastname mobile alternateMobile email gender state stateId city cityId resume professional industries_relation jobOpeningId"
       )
       .lean();
 

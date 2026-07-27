@@ -32,6 +32,9 @@ const { enqueueEmailJob } = require("../mq/emailProducer");
 const JobOpening = require("../models-v2/jobOpening_Mongoose");
 const JobApplication = require("../models-v2/jobApplication_Mongoose");
 const ResumeEnquiry = require("../models-v2/resumeEnquiry_Mongoose");
+const {
+  calculateProfileCompleteness,
+} = require("../services/profileCompleteness");
 
 /**
  * Candidate self statistics (lifetime) for candidate login.
@@ -73,10 +76,10 @@ exports.getCandidateSelfStatistics = async (req, res) => {
         ...(agencyId ? { agencyId } : {}),
       };
 
-    // Only fetch fields that we actually use
+    // Fields required for profile completeness must match services/profileCompleteness.js
     const candidate = await Candidates.findOne(candidateQuery)
       .select(
-        "id userId agencyId firstname lastname mobile email city professional industries_relation jobOpeningId"
+        "id userId agencyId firstname lastname mobile alternateMobile email gender state stateId city cityId resume professional industries_relation jobOpeningId"
       )
       .lean();
 
@@ -87,31 +90,13 @@ exports.getCandidateSelfStatistics = async (req, res) => {
     // Normalize ID to string for consistent querying
     const candidateId = String(candidate.id);
 
-    // ---------- Profile completeness (per candidate) ----------
+    // ---------- Profile completeness (weighted mandatory sections) ----------
     const professional = candidate.professional || {};
-    const completenessFields = [
-      candidate.firstname,
-      candidate.lastname,
-      candidate.mobile,
-      candidate.email,
-      candidate.city,
-      professional.experienceInyear,
-      professional.highestQualification,
-      professional.designation,
-      professional.currentSalary,
-      professional.expectedsalary,
-    ];
-
-    const filledCount = completenessFields.reduce((count, value) => {
-      if (value === null || value === undefined) return count;
-      if (typeof value === "string" && value.trim() === "") return count;
-      return count + 1;
-    }, 0);
-
-    const profileCompleteness =
-      completenessFields.length > 0
-        ? Math.round((filledCount / completenessFields.length) * 100)
-        : 0;
+    const {
+      profileCompleteness,
+      profileCompletenessLabel,
+      profileCompletenessBreakdown,
+    } = calculateProfileCompleteness(candidate);
 
     // ---------- Derived fields for job matching logic ----------
     const jobCategoryId = professional.jobCategoryId;
@@ -422,6 +407,8 @@ exports.getCandidateSelfStatistics = async (req, res) => {
     return res.json({
       candidateId,
       profileCompleteness,
+      profileCompletenessLabel,
+      profileCompletenessBreakdown,
       // Interview flow statistics
       totalInterviews: candidateInterviews,
       interviewsScheduled: candidateInterviews, // Total interviews represent scheduled ones

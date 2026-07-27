@@ -200,15 +200,19 @@ function smartRegexAndLabelParse(text) {
     if (dobMatch) dateOfBirth = dobMatch[0];
   }
 
-  // Gender
+  // Gender — never treat "female" as male (substring trap); no male default
   let gender = extractAfterLabel(["Gender", "Sex"]);
   if (!gender) {
-    if (/\bmale\b/i.test(text) && !/\bfemale\b/i.test(text)) gender = "Male";
-    else if (/\bfemale\b/i.test(text)) gender = "Female";
-    else gender = "Male";
+    if (/\bfemale\b/i.test(text) || /\bwoman\b/i.test(text)) gender = "Female";
+    else if (/\bmale\b/i.test(text) || /\bman\b/i.test(text)) gender = "Male";
+    else gender = "";
   } else {
-    if (/female/i.test(gender)) gender = "Female";
-    else if (/male/i.test(gender)) gender = "Male";
+    const g = String(gender).toLowerCase();
+    if (/\bfemale\b|\bwoman\b|\bf\b/.test(g) || g.includes("female")) gender = "Female";
+    else if (/\bmale\b|\bman\b|\bm\b/.test(g) || /(^|[^a-z])male([^a-z]|$)/i.test(g)) gender = "Male";
+    else if (g === "f") gender = "Female";
+    else if (g === "m") gender = "Male";
+    else gender = "";
   }
 
   // Address info
@@ -216,7 +220,26 @@ function smartRegexAndLabelParse(text) {
   if (street) street = street.replace(/^(address|information|details)\s+/i, "").trim();
   let state = extractAfterLabel(["State", "State Name"]);
   let city = extractAfterLabel(["City", "City Name"]);
-  let zip = extractAfterLabel(["Zip/Postal Code", "Zip Code", "Postal Code", "Pincode"]);
+  let zip = extractAfterLabel([
+    "Zip/Postal Code",
+    "Zip Code",
+    "Postal Code",
+    "Pincode",
+    "Pin Code",
+    "PIN Code",
+    "PIN",
+  ]);
+  if (zip) {
+    const zipDigits = String(zip).replace(/\D/g, "");
+    zip = zipDigits.length >= 6 ? zipDigits.slice(0, 6) : zipDigits;
+  }
+  if (!zip) {
+    // Indian PIN is 6 digits; avoid matching mobile by requiring non-digit boundaries
+    const pinMatch = text.match(
+      /(?:pin\s*code|pincode|postal\s*code|zip\s*code|zip|postal)?\s*[:\-]?\s*\b([1-9][0-9]{5})\b/i
+    );
+    if (pinMatch) zip = pinMatch[1];
+  }
 
   // Professional details
   let industry = extractAfterLabel(["Industries (Select 3)", "Industries", "Industry"]);
