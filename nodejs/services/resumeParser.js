@@ -531,7 +531,7 @@ JSON Structure:
   "mobile": "string or empty",
   "alternateMobile": "string or empty",
   "email": "string or empty",
-  "gender": "string or empty (Male, Female, Other)",
+  "gender": "string: lowercase male or female only, or empty",
   "dateOfBirth": "string (YYYY-MM-DD or DD-MM-YYYY) or empty",
   "street": "string or empty",
   "city": "string or empty",
@@ -550,18 +550,18 @@ JSON Structure:
   ],
   "industry": "string (comma separated) or empty",
   "professional": {
-    "currentlyWorking": "Yes or No",
+    "currentlyWorking": "lowercase yes or no only",
     "currentEmployer": "Current Company Name or empty",
     "designation": "Current Designation/Job Title or empty",
-    "experienceInyear": "string of total years (e.g. 4.5) or empty",
+    "experienceInyear": "exactly one of: 0-1 year, 1-3 year, 3-5 year, 5 year above",
     "currentSalary": number (annual/monthly salary) or 0,
     "expectedsalary": number (expected salary) or 0,
-    "noticePeriod": "string (e.g. 30 Days) or empty",
+    "noticePeriod": "exactly one of: none, 1-15 days, 15-30 days, 30-45 days",
     "skill": "string (comma separated skills) or empty",
     "preferedJobLocation": "string or empty",
     "jobCategory": "string or empty",
     "course": "string or empty",
-    "highestQualification": "string or empty"
+    "highestQualification": "exactly one of: under graduate, graduation, post graduate"
   }
 }
 
@@ -569,6 +569,150 @@ Resume Text to analyze:
 \`\`\`
 ${text}
 \`\`\``;
+}
+
+function normalizeGenderValue(gender) {
+  const raw = String(gender || "").trim().toLowerCase();
+  if (!raw) return "";
+  if (raw === "f" || raw === "female" || /\bfemale\b/.test(raw) || /\bwoman\b/.test(raw)) return "female";
+  if (raw === "m" || raw === "male" || /\bmale\b/.test(raw) || /\bman\b/.test(raw)) return "male";
+  return "";
+}
+
+function normalizeExperienceInYearValue(raw) {
+  if (raw === undefined || raw === null || raw === "") return "";
+  const str = String(raw).trim().toLowerCase();
+  const buckets = ["0-1 year", "1-3 year", "3-5 year", "5 year above"];
+  if (buckets.includes(str)) return str;
+  const numMatch = str.match(/(\d+(?:\.\d+)?)/);
+  const years = numMatch ? parseFloat(numMatch[1]) : NaN;
+  if (!isNaN(years)) {
+    if (years < 1) return "0-1 year";
+    if (years < 3) return "1-3 year";
+    if (years < 5) return "3-5 year";
+    return "5 year above";
+  }
+  if (/fresher|no experience|fresh/.test(str)) return "0-1 year";
+  return "";
+}
+
+function normalizeCurrentlyWorkingValue(raw) {
+  const str = String(raw || "").trim().toLowerCase();
+  if (!str) return "";
+  if (/^(yes|y|true|currently|working|employed)/.test(str)) return "yes";
+  if (/^(no|n|false|not|unemployed|student)/.test(str)) return "no";
+  return "";
+}
+
+function normalizeNoticePeriodValue(raw) {
+  const str = String(raw || "").trim().toLowerCase();
+  if (!str) return "";
+  if (/none|immediate|not applicable|^na$/.test(str)) return "none";
+  const numMatch = str.match(/(\d+)/);
+  const days = numMatch ? parseInt(numMatch[1], 10) : NaN;
+  if (!isNaN(days)) {
+    if (days <= 15) return "1-15 days";
+    if (days <= 30) return "15-30 days";
+    return "30-45 days";
+  }
+  if (/1-15/.test(str)) return "1-15 days";
+  if (/15-30/.test(str)) return "15-30 days";
+  if (/30-45|45|60|90/.test(str)) return "30-45 days";
+  return "";
+}
+
+function normalizeHighestQualificationValue(raw) {
+  const str = String(raw || "").trim().toLowerCase();
+  if (!str) return "";
+  if (["under graduate", "graduation", "post graduate"].includes(str)) return str;
+  if (/post\s*grad|master|mba|m\.?tech|phd|doctorate/.test(str)) return "post graduate";
+  if (/under\s*grad|12th|hsc|ssc|intermediate/.test(str)) return "under graduate";
+  if (/b\.?tech|b\.?e\.?|bachelor|b\.?arch|b\.?com|b\.?sc|bca|graduation|graduate|degree|diploma/.test(str)) {
+    return "graduation";
+  }
+  return "";
+}
+
+function normalizeParsedResumeData(parsedData) {
+  if (!parsedData || typeof parsedData !== "object") return parsedData;
+  parsedData.gender = normalizeGenderValue(parsedData.gender);
+  if (!parsedData.professional || typeof parsedData.professional !== "object") {
+    parsedData.professional = {};
+  }
+  const prof = parsedData.professional;
+  prof.experienceInyear = normalizeExperienceInYearValue(prof.experienceInyear);
+  prof.currentlyWorking = normalizeCurrentlyWorkingValue(prof.currentlyWorking);
+  prof.noticePeriod = normalizeNoticePeriodValue(prof.noticePeriod);
+  prof.highestQualification = normalizeHighestQualificationValue(
+    prof.highestQualification || prof.course || ""
+  );
+  return parsedData;
+}
+
+/**
+ * Extract the first balanced JSON object from a string (handles trailing AI commentary).
+ */
+function extractJsonObject(text) {
+  const start = text.indexOf("{");
+  if (start === -1) {
+    throw new Error("No JSON object found in AI response");
+  }
+
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escape) {
+        escape = false;
+      } else if (ch === "\\") {
+        escape = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+    } else if (ch === '"') {
+      inString = true;
+    } else if (ch === "{") {
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        return text.substring(start, i + 1);
+      }
+    }
+  }
+
+  throw new Error("Unbalanced JSON object in AI response");
+}
+
+/**
+ * Parse AI text into JSON, tolerating markdown fences and trailing non-JSON text.
+ */
+function parseAiJsonResponse(rawJsonText) {
+  if (!rawJsonText || !String(rawJsonText).trim()) {
+    throw new Error("AI returned empty response");
+  }
+
+  const cleanedJson = String(rawJsonText)
+    .replace(/```json/gi, "")
+    .replace(/```/g, "")
+    .trim();
+
+  try {
+    return JSON.parse(cleanedJson);
+  } catch (firstError) {
+    try {
+      return JSON.parse(extractJsonObject(cleanedJson));
+    } catch (secondError) {
+      const err = new Error(
+        "AI returned invalid JSON. Please try uploading again or update the AI Model in Super Admin → OCR & API Configuration."
+      );
+      err.code = "AI_PARSE_FAILED";
+      throw err;
+    }
+  }
 }
 
 /**
@@ -641,16 +785,13 @@ async function parseResumeData(fileData, extractionSource = "application/pdf") {
       throw new Error("AI returned empty response");
     }
 
-    const cleanedJson = rawJsonText.replace(/\`\`\`json/g, "").replace(/\`\`\`/g, "").trim();
-    const parsedData = JSON.parse(cleanedJson);
+    const parsedData = parseAiJsonResponse(rawJsonText);
 
     if (!parsedData || typeof parsedData !== "object") {
       throw new Error("AI returned invalid JSON structure");
     }
 
-    if (!parsedData.professional || typeof parsedData.professional !== "object") {
-      parsedData.professional = parsedData.professional || {};
-    }
+    normalizeParsedResumeData(parsedData);
 
     return {
       parsedData,

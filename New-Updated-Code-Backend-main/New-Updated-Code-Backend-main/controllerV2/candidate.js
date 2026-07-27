@@ -980,7 +980,11 @@ exports.getCandidates = async (req, res) => {
     delete basicDetails?.quickFilter;
 
     // Drawer + quick-tab status filters must run AFTER interviewStatus lookup
-    const drawerInterviewStatus = basicDetails?.interviewStatus || null;
+    const drawerInterviewStatusRaw = basicDetails?.interviewStatus || null;
+    const drawerInterviewStatus =
+      typeof drawerInterviewStatusRaw === "string"
+        ? drawerInterviewStatusRaw.trim()
+        : drawerInterviewStatusRaw;
     delete basicDetails?.interviewStatus;
 
     // Status tabs are applied after interviewStatus lookup (not on stale document field)
@@ -1330,8 +1334,16 @@ exports.getCandidates = async (req, res) => {
       quickFilter
     );
     if (drawerInterviewStatus) {
+      const escapedDrawerStatus = String(drawerInterviewStatus).replace(
+        /[.*+?^${}()|[\]\\]/g,
+        "\\$&"
+      );
       interviewStatusStages.push({
-        $match: { interviewStatus: drawerInterviewStatus },
+        $match: {
+          interviewStatus: {
+            $regex: new RegExp(`^${escapedDrawerStatus}$`, "i"),
+          },
+        },
       });
     }
     const needsStatusFilter =
