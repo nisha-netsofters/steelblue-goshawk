@@ -1,5 +1,6 @@
 const { default: mongoose } = require("mongoose");
 const RecruiterInternalComments = require("../models-v2/recruiterInternalComments_Mongoose");
+const { buildAgencyMatch } = require("../services/recruiterInternalCommentStages");
 
 const STAFF_ROLES = [
   "Admin",
@@ -40,12 +41,12 @@ exports.createRecruiterInternalComment = async (req, res) => {
     const created = await RecruiterInternalComments.create({
       _id: objectId,
       id: String(objectId),
-      candidateId,
-      userId: authUser.id,
+      candidateId: String(candidateId),
+      userId: String(authUser.id),
       authorName: authUser.name || authUser.email || "Recruiter",
-      agencyId,
+      agencyId: agencyId ? String(agencyId) : undefined,
       comment: comment.trim(),
-      visibleToClient: !!visibleToClient,
+      visibleToClient: visibleToClient === true || visibleToClient === "true",
       isdeleted: 0,
     });
 
@@ -74,9 +75,9 @@ exports.getRecruiterInternalComments = async (req, res) => {
     perPage = Number(perPage) || 50;
 
     const match = {
-      candidateId,
-      agencyId,
+      candidateId: String(candidateId),
       isdeleted: 0,
+      ...buildAgencyMatch(agencyId),
     };
 
     // Clients only see comments explicitly enabled for them

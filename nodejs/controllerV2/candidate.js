@@ -46,6 +46,10 @@ const {
   quickFilterNeedsStatusStages,
   getInterviewStatusStages,
 } = require("../services/candidateQuickFilter");
+const {
+  getClientVisibleCommentsStages,
+  getLatestInternalCommentStages,
+} = require("../services/recruiterInternalCommentStages");
 
 /**
  * Candidate self statistics (lifetime) for candidate login.
@@ -2221,6 +2225,8 @@ exports.getClientCandidates = async (req, res) => {
       },
       ...pipelined,
       ...profileCompletionStages,
+      ...getClientVisibleCommentsStages(agencyId),
+      ...getLatestInternalCommentStages(agencyId, { clientVisibleOnly: true }),
       {
         $skip: page * perPage,
       },
@@ -2677,6 +2683,8 @@ exports.BestMatchClientCandidates = async (req, res) => {
       },
       ...pipelined,
       ...profileCompletionStages,
+      ...getClientVisibleCommentsStages(agencyId),
+      ...getLatestInternalCommentStages(agencyId, { clientVisibleOnly: true }),
       {
         $skip: page * perPage,
       },
