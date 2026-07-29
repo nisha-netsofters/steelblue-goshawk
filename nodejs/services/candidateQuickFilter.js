@@ -36,7 +36,8 @@ function getQuickFilterEarlyMatch(quickFilter) {
   switch (quickFilter) {
     case "recentlyAdded":
       return { createdAt: { $gte: getDaysAgo(RECENTLY_ADDED_DAYS) } };
-
+    case "newCandidates":
+      return { updatedAt: { $gte: getDaysAgo(RECENTLY_EDITED_DAYS) } };
     default:
       return {};
   }
@@ -114,33 +115,12 @@ function getQuickFilterPostViewStages(quickFilter, userId, agencyId) {
     });
   }
 
-  // New Candidates: unviewed (computed status "new") OR profile edited after create
-  if (quickFilter === "newCandidates") {
-    const editedSince = getDaysAgo(RECENTLY_EDITED_DAYS);
-    stages.push({
-      $match: {
-        $expr: {
-          $or: [
-            { $eq: ["$status", "new"] },
-            {
-              $and: [
-                { $gte: ["$updatedAt", editedSince] },
-                { $gt: ["$updatedAt", "$createdAt"] },
-              ],
-            },
-          ],
-        },
-      },
-    });
-  }
-
   return stages;
 }
 
 function quickFilterNeedsViewStages(quickFilter) {
   return (
     quickFilter === "recentlyViewed" ||
-    quickFilter === "newCandidates" ||
     quickFilter === "favorites"
   );
 }

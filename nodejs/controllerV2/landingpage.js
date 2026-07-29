@@ -233,6 +233,7 @@ exports.updateUserForCandidateApply = async (req, res) => {
             industries_relation: industries_relationlist,
             professional,
             ...candidate,
+            updatedAt: new Date(),
           },
         }
       );
@@ -243,6 +244,7 @@ exports.updateUserForCandidateApply = async (req, res) => {
           $set: {
             professional,
             ...candidate,
+            updatedAt: new Date(),
           },
         }
       );
