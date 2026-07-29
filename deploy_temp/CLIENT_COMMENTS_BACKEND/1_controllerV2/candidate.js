@@ -42,6 +42,7 @@ const {
   getQuickFilterEarlyMatch,
   getQuickFilterStatusMatch,
   getQuickFilterPostViewStages,
+  getCandidateViewStatusStages,
   quickFilterNeedsViewStages,
   quickFilterNeedsStatusStages,
   getInterviewStatusStages,
@@ -728,13 +729,20 @@ exports.createCandidates = async (req, res) => {
           typeof responce?.toObject === "function"
             ? responce.toObject()
             : responce;
+        // Mark as handled to avoid duplicate message sends on later edits/cron.
+        if (candidateForMsg?.id) {
+          await Candidates.updateOne(
+            { id: candidateForMsg.id },
+            { $set: { whatsappMsg: true } }
+          );
+        }
         console.info(
           "Msg API trigger => candidateId:",
           candidateForMsg?.id,
           "mobile:",
           candidateForMsg?.mobile
         );
-        sendWelcomeWhatsapp(candidateForMsg).catch((err) => {
+        sendWelcomeWhatsapp(candidateForMsg, { trigger: "create" }).catch((err) => {
           console.info("sendWelcomeWhatsapp error =>", err?.message || err);
         });
       } catch (msgErr) {
@@ -893,6 +901,10 @@ exports.candidateUpdate = async (req, res) => {
 
   // Security: Prevent password leakage into Candidates collection
   if (candidate.password) delete candidate.password;
+  // Candidate profile updates must never toggle whatsapp delivery flags.
+  if (Object.prototype.hasOwnProperty.call(candidate, "whatsappMsg")) {
+    delete candidate.whatsappMsg;
+  }
 
   try {
     if (typeof req.body.professional === "string" && req.body.professional) {
@@ -950,7 +962,7 @@ exports.candidateUpdate = async (req, res) => {
       await Candidates.updateOne(
         { id: id },
         {
-          $set: updatePayload,
+          $set: { ...updatePayload, updatedAt: new Date(), whatsappMsg: true },
         }
       );
     } else {
@@ -960,38 +972,13 @@ exports.candidateUpdate = async (req, res) => {
       await Candidates.updateOne(
         { id: id },
         {
-          $set: updatePayload,
+          $set: { ...updatePayload, updatedAt: new Date(), whatsappMsg: true },
         }
       );
     }
 
-    // After edit/save — trigger Msg APIs (e.g. API Config 2 with {{unfilled_fields_*}})
-    try {
-      const updatedCandidate = await Candidates.findOne({ id });
-      if (updatedCandidate) {
-        const candidateForMsg =
-          typeof updatedCandidate.toObject === "function"
-            ? updatedCandidate.toObject()
-            : updatedCandidate;
-        console.info(
-          "Msg API trigger (update) => candidateId:",
-          candidateForMsg?.id,
-          "mobile:",
-          candidateForMsg?.mobile
-        );
-        sendWelcomeWhatsapp(candidateForMsg).catch((err) => {
-          console.info(
-            "sendWelcomeWhatsapp (update) error =>",
-            err?.message || err
-          );
-        });
-      }
-    } catch (msgErr) {
-      console.info(
-        "sendWelcomeWhatsapp update trigger error =>",
-        msgErr?.message || msgErr
-      );
-    }
+    // Msg API should only fire on CREATE, not on every profile edit.
+    // Candidate login profile updates must not re-trigger WhatsApp messages.
 
     res.json({ msg: "success" });
   } catch (err) {
@@ -1322,54 +1309,12 @@ exports.getCandidates = async (req, res) => {
       profileCompletionStages.push(profileCompletionMatchStage);
     }
 
-    const viewAndStatusStages = [
-      {
-        $lookup: {
-          from: "viewCandidates",
-          localField: "id",
-          foreignField: "candidateid",
-          as: "viewCandidates",
-          pipeline: [
-            {
-              $match: {
-                userId: { $in: [userId2] },
-              },
-            },
-          ],
-        },
-      },
-      {
-        $addFields: {
-          createdAtDifference: { $subtract: [date, "$createdAt"] },
-        },
-      },
-      {
-        $addFields: {
-          status: {
-            $switch: {
-              branches: [
-                {
-                  case: { $gt: [{ $size: "$viewCandidates" }, 0] },
-                  then: "view",
-                },
-                {
-                  case: {
-                    $gte: ["$createdAtDifference", 15 * 24 * 60 * 60 * 1000],
-                  },
-                  then: "view",
-                },
-                {
-                  case: { $eq: [{ $size: "$viewCandidates" }, 0] },
-                  then: "new",
-                },
-              ],
-              default: "new",
-            },
-          },
-        },
-      },
-      ...getQuickFilterPostViewStages(quickFilter, userId2, agencyId),
-    ];
+    const viewAndStatusStages = getCandidateViewStatusStages(
+      quickFilter,
+      userId2,
+      agencyId,
+      date
+    );
 
     // Resolve real interviewStatus before pagination for status tabs OR drawer filter
     const interviewStatusStages = getInterviewStatusStages(
@@ -1668,6 +1613,31 @@ exports.checkCandidate = async (req, res) => {
   }
 };
 
+/** Public: load candidate for registration/edit form (?cid=) — scoped by agency slug */
+exports.getPublicCandidateForApply = async (req, res) => {
+  try {
+    const id = String(req.params.id || "").trim();
+    const slug = String(req.query.slug || "").trim();
+    if (!id) {
+      return res.status(400).json({ error: "Candidate id required" });
+    }
+    const doc = await Candidates.findOne({ id }).lean();
+    if (!doc) {
+      return res.status(404).json({ error: "Candidate not found" });
+    }
+    if (slug) {
+      const agencyDoc = await Agency.findOne({ slug }).select("id slug").lean();
+      if (!agencyDoc || String(agencyDoc.id) !== String(doc.agencyId)) {
+        return res.status(404).json({ error: "Candidate not found" });
+      }
+    }
+    return res.json({ msg: "success", data: doc });
+  } catch (err) {
+    console.info("getPublicCandidateForApply error =>", err?.message || err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
+
 exports.hiredCandidateforClients = async (req, res) => {
   // const onBoardingId = req?.query?.id;
   const clientId = req?.query?.id;
@@ -1810,10 +1780,7 @@ exports.getClientCandidates = async (req, res) => {
     if (quickFilter === "favorites") {
       isSavedCandidates = true;
     }
-    const quickFilterEarlyMatch = {
-      ...getQuickFilterEarlyMatch(quickFilter),
-      ...(getQuickFilterStatusMatch(quickFilter) || {}),
-    };
+    const quickFilterEarlyMatch = getQuickFilterEarlyMatch(quickFilter);
 
     let industriesId = [];
     let jobCategoryId = [];
@@ -2206,6 +2173,13 @@ exports.getClientCandidates = async (req, res) => {
       profileCompletionStages.push(profileCompletionMatchStage);
     }
 
+    const clientQuickFilterStages = [
+      ...getCandidateViewStatusStages(quickFilter, userId, agencyId),
+      ...(quickFilterNeedsStatusStages(quickFilter)
+        ? getInterviewStatusStages(agencyId, quickFilter)
+        : []),
+    ];
+
     const demo = await Candidates.aggregate([
       {
         $sort: { createdAt: -1 },
@@ -2225,6 +2199,7 @@ exports.getClientCandidates = async (req, res) => {
       },
       ...pipelined,
       ...profileCompletionStages,
+      ...clientQuickFilterStages,
       ...getClientVisibleCommentsStages(agencyId),
       ...getLatestInternalCommentStages(agencyId, { clientVisibleOnly: true }),
       {
@@ -2254,6 +2229,7 @@ exports.getClientCandidates = async (req, res) => {
       },
       ...pipelined,
       ...profileCompletionStages,
+      ...clientQuickFilterStages,
       {
         $count: "count",
       },
