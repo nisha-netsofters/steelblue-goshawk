@@ -955,7 +955,7 @@ exports.candidateUpdate = async (req, res) => {
       await Candidates.updateOne(
         { id: id },
         {
-          $set: { ...updatePayload, updatedAt: new Date() },
+          $set: { ...updatePayload, updatedAt: new Date(), whatsappMsg: true },
         }
       );
     } else {
@@ -965,7 +965,7 @@ exports.candidateUpdate = async (req, res) => {
       await Candidates.updateOne(
         { id: id },
         {
-          $set: { ...updatePayload, updatedAt: new Date() },
+          $set: { ...updatePayload, updatedAt: new Date(), whatsappMsg: true },
         }
       );
     }

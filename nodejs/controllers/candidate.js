@@ -133,6 +133,8 @@ exports.candidateUpdate = async (req, res) => {
   if (Object.prototype.hasOwnProperty.call(candidate, "whatsappMsg")) {
     delete candidate.whatsappMsg;
   }
+  // Editing profile should mark message flow as already handled.
+  candidate.whatsappMsg = true;
 
   try {
     if (candidate?.professional?.length > 0)

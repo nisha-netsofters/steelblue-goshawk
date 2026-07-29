@@ -238,6 +238,7 @@ exports.updateUserForCandidateApply = async (req, res) => {
             professional,
             ...candidate,
             updatedAt: new Date(),
+            whatsappMsg: true,
           },
         }
       );
@@ -249,6 +250,7 @@ exports.updateUserForCandidateApply = async (req, res) => {
             professional,
             ...candidate,
             updatedAt: new Date(),
+            whatsappMsg: true,
           },
         }
       );

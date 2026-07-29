@@ -32,6 +32,7 @@ const candidates = new Schema(
     },
     comments: String,
     gender: String,
+    certifications: String,
     image: String,
     resume: String,
     interviewStatusUpdate: {
