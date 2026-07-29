@@ -966,33 +966,8 @@ exports.candidateUpdate = async (req, res) => {
       );
     }
 
-    // After edit/save — trigger Msg APIs (e.g. API Config 2 with {{unfilled_fields_*}})
-    try {
-      const updatedCandidate = await Candidates.findOne({ id });
-      if (updatedCandidate) {
-        const candidateForMsg =
-          typeof updatedCandidate.toObject === "function"
-            ? updatedCandidate.toObject()
-            : updatedCandidate;
-        console.info(
-          "Msg API trigger (update) => candidateId:",
-          candidateForMsg?.id,
-          "mobile:",
-          candidateForMsg?.mobile
-        );
-        sendWelcomeWhatsapp(candidateForMsg).catch((err) => {
-          console.info(
-            "sendWelcomeWhatsapp (update) error =>",
-            err?.message || err
-          );
-        });
-      }
-    } catch (msgErr) {
-      console.info(
-        "sendWelcomeWhatsapp update trigger error =>",
-        msgErr?.message || msgErr
-      );
-    }
+    // Msg API should only fire on CREATE, not on every profile edit.
+    // Candidate login profile updates must not re-trigger WhatsApp messages.
 
     res.json({ msg: "success" });
   } catch (err) {
