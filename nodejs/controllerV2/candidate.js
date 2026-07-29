@@ -894,6 +894,10 @@ exports.candidateUpdate = async (req, res) => {
 
   // Security: Prevent password leakage into Candidates collection
   if (candidate.password) delete candidate.password;
+  // Candidate profile updates must never toggle whatsapp delivery flags.
+  if (Object.prototype.hasOwnProperty.call(candidate, "whatsappMsg")) {
+    delete candidate.whatsappMsg;
+  }
 
   try {
     if (typeof req.body.professional === "string" && req.body.professional) {

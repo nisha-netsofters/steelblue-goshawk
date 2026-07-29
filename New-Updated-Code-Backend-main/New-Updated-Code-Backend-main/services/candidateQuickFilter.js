@@ -196,7 +196,7 @@ function getInterviewStatusStages(agencyId, quickFilter) {
 
 module.exports = {
   RECENTLY_ADDED_DAYS,
-  RECENTLY_EDITED_DAYS,
+  RECENTLY_EDITED_DAYS, 
   IN_PROCESS_STATUSES,
   STATUS_QUICK_FILTERS,
   getQuickFilterEarlyMatch,

@@ -71,12 +71,6 @@ const CANDIDATE_FIELD_CHECKS = [
     get: (c) => c?.gender,
   },
   {
-    key: "dateOfBirth",
-    label: "Date of Birth",
-    section: "Personal Information",
-    get: (c) => c?.dateOfBirth || c?.dob,
-  },
-  {
     key: "currentAddress",
     label: "Current Address",
     section: "Personal Information",

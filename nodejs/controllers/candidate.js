@@ -129,6 +129,10 @@ exports.candidateUpdate = async (req, res) => {
     // let resp = await fileUpload(req.files.resume)
     candidate.resume = `${resp.url}`;
   }
+  // Never allow profile edits to reset WhatsApp delivery flags.
+  if (Object.prototype.hasOwnProperty.call(candidate, "whatsappMsg")) {
+    delete candidate.whatsappMsg;
+  }
 
   try {
     if (candidate?.professional?.length > 0)

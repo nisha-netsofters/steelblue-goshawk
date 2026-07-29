@@ -195,6 +195,10 @@ exports.updateUserForCandidateApply = async (req, res) => {
     // let resp = await fileUpload(req.files.resume)
     candidate.resume = `${resp.url}`;
   }
+  // Public apply/edit updates should not reset WhatsApp-sent state.
+  if (Object.prototype.hasOwnProperty.call(candidate, "whatsappMsg")) {
+    delete candidate.whatsappMsg;
+  }
 
   try {
     professional = JSON.parse(req.body.professional);
