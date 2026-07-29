@@ -219,21 +219,21 @@ const getResumeExtractionStatus = async () => {
     // Built-in Tesseract fallback — do not block resume extraction
     ocrConfigured = true;
   } else if (!ocrProvider?.isEnabled) {
-    missing.push("Active OCR provider is not configured");
+    missing.push("the active OCR provider is not configured");
   } else if (ocrProviderKey === "tesseract") {
     ocrConfigured = true;
   } else if (ocrProviderKey === "google_vision" && !hasNonEmpty(ocrProvider.apiKey)) {
-    missing.push("Google Vision API Key is not set");
+    missing.push("the Google Vision API key is missing");
   } else if (
     ocrProviderKey === "aws_textract" &&
     (!hasNonEmpty(ocrProvider.accessKeyId) || !hasNonEmpty(ocrProvider.secretAccessKey))
   ) {
-    missing.push("AWS Textract credentials are not set");
+    missing.push("AWS Textract credentials are missing");
   } else if (
     ocrProviderKey === "azure_document_intelligence" &&
     (!hasNonEmpty(ocrProvider.endpoint) || !hasNonEmpty(ocrProvider.apiKey))
   ) {
-    missing.push("Azure Document Intelligence credentials are not set");
+    missing.push("Azure Document Intelligence credentials are missing");
   } else {
     ocrConfigured = true;
   }
@@ -243,21 +243,24 @@ const getResumeExtractionStatus = async () => {
   const aiProvider = config?.ai?.providers?.[aiProviderKey];
 
   if (!aiEnabled) {
-    missing.push("AI service is not enabled");
+    missing.push("the AI service is not enabled");
   } else if (!aiProvider?.isEnabled) {
-    missing.push("Active AI provider is not configured");
+    missing.push("the active AI provider is not configured");
   } else if (!hasNonEmpty(aiProvider.apiKey)) {
-    missing.push("AI API Key is not set");
+    missing.push("the AI API key is missing");
   } else if (!hasNonEmpty(aiProvider.model)) {
-    missing.push("AI Model is not set");
+    missing.push("the AI model is missing");
   } else {
     aiConfigured = true;
   }
 
+  // Also clean OCR missing messages if any were pushed earlier - update those too
   const ready = ocrConfigured && aiConfigured;
   const message = ready
-    ? "OCR & AI API Configuration is ready"
-    : `API set nathi. Please ask Super Admin to configure OCR & API Configuration. ${missing.join(". ")}.`;
+    ? "OCR & API Configuration is ready."
+    : missing.length > 0
+      ? `Resume auto-extraction is unavailable. Please ask your Super Admin to configure OCR & API Configuration (${missing.join("; ")}).`
+      : "Resume auto-extraction is unavailable. Please ask your Super Admin to configure OCR & API Configuration.";
 
   return {
     ready,

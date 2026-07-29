@@ -757,7 +757,7 @@ async function parseResumeData(fileData, extractionSource = "application/pdf") {
   const aiConfig = await getActiveAiProvider();
   if (!aiConfig) {
     const err = new Error(
-      "AI API is not configured. Please ask the Super Admin to configure the AI API Key and Model in OCR & API Configuration."
+      "AI API is not configured. Please ask your Super Admin to configure the AI API key and model in OCR & API Configuration."
     );
     err.code = "API_CONFIG_NOT_SET";
     throw err;
