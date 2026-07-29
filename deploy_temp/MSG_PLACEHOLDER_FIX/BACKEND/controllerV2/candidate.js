@@ -42,7 +42,6 @@ const {
   getQuickFilterEarlyMatch,
   getQuickFilterStatusMatch,
   getQuickFilterPostViewStages,
-  getCandidateViewStatusStages,
   quickFilterNeedsViewStages,
   quickFilterNeedsStatusStages,
   getInterviewStatusStages,
@@ -951,7 +950,7 @@ exports.candidateUpdate = async (req, res) => {
       await Candidates.updateOne(
         { id: id },
         {
-          $set: { ...updatePayload, updatedAt: new Date() },
+          $set: updatePayload,
         }
       );
     } else {
@@ -961,7 +960,7 @@ exports.candidateUpdate = async (req, res) => {
       await Candidates.updateOne(
         { id: id },
         {
-          $set: { ...updatePayload, updatedAt: new Date() },
+          $set: updatePayload,
         }
       );
     }
@@ -1323,12 +1322,54 @@ exports.getCandidates = async (req, res) => {
       profileCompletionStages.push(profileCompletionMatchStage);
     }
 
-    const viewAndStatusStages = getCandidateViewStatusStages(
-      quickFilter,
-      userId2,
-      agencyId,
-      date
-    );
+    const viewAndStatusStages = [
+      {
+        $lookup: {
+          from: "viewCandidates",
+          localField: "id",
+          foreignField: "candidateid",
+          as: "viewCandidates",
+          pipeline: [
+            {
+              $match: {
+                userId: { $in: [userId2] },
+              },
+            },
+          ],
+        },
+      },
+      {
+        $addFields: {
+          createdAtDifference: { $subtract: [date, "$createdAt"] },
+        },
+      },
+      {
+        $addFields: {
+          status: {
+            $switch: {
+              branches: [
+                {
+                  case: { $gt: [{ $size: "$viewCandidates" }, 0] },
+                  then: "view",
+                },
+                {
+                  case: {
+                    $gte: ["$createdAtDifference", 15 * 24 * 60 * 60 * 1000],
+                  },
+                  then: "view",
+                },
+                {
+                  case: { $eq: [{ $size: "$viewCandidates" }, 0] },
+                  then: "new",
+                },
+              ],
+              default: "new",
+            },
+          },
+        },
+      },
+      ...getQuickFilterPostViewStages(quickFilter, userId2, agencyId),
+    ];
 
     // Resolve real interviewStatus before pagination for status tabs OR drawer filter
     const interviewStatusStages = getInterviewStatusStages(
@@ -1794,7 +1835,10 @@ exports.getClientCandidates = async (req, res) => {
     if (quickFilter === "favorites") {
       isSavedCandidates = true;
     }
-    const quickFilterEarlyMatch = getQuickFilterEarlyMatch(quickFilter);
+    const quickFilterEarlyMatch = {
+      ...getQuickFilterEarlyMatch(quickFilter),
+      ...(getQuickFilterStatusMatch(quickFilter) || {}),
+    };
 
     let industriesId = [];
     let jobCategoryId = [];
@@ -2187,13 +2231,6 @@ exports.getClientCandidates = async (req, res) => {
       profileCompletionStages.push(profileCompletionMatchStage);
     }
 
-    const clientQuickFilterStages = [
-      ...getCandidateViewStatusStages(quickFilter, userId, agencyId),
-      ...(quickFilterNeedsStatusStages(quickFilter)
-        ? getInterviewStatusStages(agencyId, quickFilter)
-        : []),
-    ];
-
     const demo = await Candidates.aggregate([
       {
         $sort: { createdAt: -1 },
@@ -2213,7 +2250,6 @@ exports.getClientCandidates = async (req, res) => {
       },
       ...pipelined,
       ...profileCompletionStages,
-      ...clientQuickFilterStages,
       ...getClientVisibleCommentsStages(agencyId),
       ...getLatestInternalCommentStages(agencyId, { clientVisibleOnly: true }),
       {
@@ -2243,7 +2279,6 @@ exports.getClientCandidates = async (req, res) => {
       },
       ...pipelined,
       ...profileCompletionStages,
-      ...clientQuickFilterStages,
       {
         $count: "count",
       },

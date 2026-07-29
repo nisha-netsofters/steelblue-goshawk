@@ -50,15 +50,20 @@ function getQuickFilterStatusMatch(quickFilter) {
 
   switch (quickFilter) {
     case "inProcess":
-      return { interviewStatus: { $in: IN_PROCESS_STATUSES } };
+      return {
+        interviewStatus: {
+          $regex:
+            /^(shortlisted|trail|reschedule|cv[\s_-]?shared|completed)$/i,
+        },
+      };
     case "interviewScheduled":
-      return { interviewStatus: "scheduled" };
+      return { interviewStatus: /^scheduled$/i };
     case "selected":
-      return { interviewStatus: "hired" };
+      return { interviewStatus: /^hired$/i };
     case "rejected":
-      return { interviewStatus: "rejected" };
+      return { interviewStatus: /^rejected$/i };
     case "hold":
-      return { interviewStatus: "hold" };
+      return { interviewStatus: /^hold$/i };
     default:
       return null;
   }
@@ -109,15 +114,22 @@ function getQuickFilterPostViewStages(quickFilter, userId, agencyId) {
     });
   }
 
-  // New Candidates: never-viewed ("new") OR recently edited profiles
+  // New Candidates: unviewed (computed status "new") OR profile edited after create
   if (quickFilter === "newCandidates") {
     const editedSince = getDaysAgo(RECENTLY_EDITED_DAYS);
     stages.push({
       $match: {
-        $or: [
-          { status: "new" },
-          { updatedAt: { $gte: editedSince } },
-        ],
+        $expr: {
+          $or: [
+            { $eq: ["$status", "new"] },
+            {
+              $and: [
+                { $gte: ["$updatedAt", editedSince] },
+                { $gt: ["$updatedAt", "$createdAt"] },
+              ],
+            },
+          ],
+        },
       },
     });
   }
@@ -153,7 +165,7 @@ function getInterviewStatusStages(agencyId, quickFilter) {
           { $sort: { createdAt: -1 } },
           {
             $match: {
-              agencyId: { $in: [agencyId] },
+              agencyId: { $in: [String(agencyId)] },
             },
           },
         ],
@@ -194,6 +206,59 @@ function getInterviewStatusStages(agencyId, quickFilter) {
   return stages;
 }
 
+function getCandidateViewStatusStages(quickFilter, userId, agencyId, date = new Date()) {
+  if (!quickFilterNeedsViewStages(quickFilter)) return [];
+
+  return [
+    {
+      $lookup: {
+        from: "viewCandidates",
+        localField: "id",
+        foreignField: "candidateid",
+        as: "viewCandidates",
+        pipeline: [
+          {
+            $match: {
+              userId: { $in: [userId] },
+            },
+          },
+        ],
+      },
+    },
+    {
+      $addFields: {
+        createdAtDifference: { $subtract: [date, "$createdAt"] },
+      },
+    },
+    {
+      $addFields: {
+        status: {
+          $switch: {
+            branches: [
+              {
+                case: { $gt: [{ $size: "$viewCandidates" }, 0] },
+                then: "view",
+              },
+              {
+                case: {
+                  $gte: ["$createdAtDifference", 15 * 24 * 60 * 60 * 1000],
+                },
+                then: "view",
+              },
+              {
+                case: { $eq: [{ $size: "$viewCandidates" }, 0] },
+                then: "new",
+              },
+            ],
+            default: "new",
+          },
+        },
+      },
+    },
+    ...getQuickFilterPostViewStages(quickFilter, userId, agencyId),
+  ];
+}
+
 module.exports = {
   RECENTLY_ADDED_DAYS,
   RECENTLY_EDITED_DAYS,
@@ -202,6 +267,7 @@ module.exports = {
   getQuickFilterEarlyMatch,
   getQuickFilterStatusMatch,
   getQuickFilterPostViewStages,
+  getCandidateViewStatusStages,
   quickFilterNeedsViewStages,
   quickFilterNeedsStatusStages,
   getInterviewStatusStages,
