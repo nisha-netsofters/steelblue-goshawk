@@ -1,0 +1,23 @@
+UPLOAD THESE INTO live nodejs folder (same relative paths), then touch tmp/restart.txt
+
+MUST upload (order):
+1. app.js                          -> nodejs/app.js
+2. controllerV2/candidate.js       -> nodejs/controllerV2/candidate.js
+3. controllerV2/user.js            -> nodejs/controllerV2/user.js
+4. controllerV2/landingpage.js     -> nodejs/controllerV2/landingpage.js
+5. controllerV2/saved_Candidates.js-> nodejs/controllerV2/saved_Candidates.js
+6. middleware/whatsappMSG/welcomeMessage.js -> nodejs/middleware/whatsappMSG/welcomeMessage.js
+7. models-v2/candidates_Mongoose.js
+8. models-v2/savedCandidates_Mongoose.js
+9. services/candidateQuickFilter.js
+10. routes-V2/candidate.js
+11. routes-V2/favoriteToggle.js
+12. tmp/restart.txt  (touch/upload to restart Passenger)
+
+DO NOT upload old CLIENT_COMMENTS_BACKEND or old New-Updated candidate.js that still has "Msg API trigger (update)".
+
+After restart, test:
+- GET  /api/candidate/toggle-favorite-check  should return JSON ok
+- POST /api/candidate/toggle-favorite        should work (star)
+- Candidate profile Save Changes             should NOT call Msg/WhatsApp API
+- New candidate create                       SHOULD still send Msg API
