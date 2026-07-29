@@ -729,6 +729,13 @@ exports.createCandidates = async (req, res) => {
           typeof responce?.toObject === "function"
             ? responce.toObject()
             : responce;
+        // Mark as handled to avoid duplicate message sends on later edits/cron.
+        if (candidateForMsg?.id) {
+          await Candidates.updateOne(
+            { id: candidateForMsg.id },
+            { $set: { whatsappMsg: true } }
+          );
+        }
         console.info(
           "Msg API trigger => candidateId:",
           candidateForMsg?.id,

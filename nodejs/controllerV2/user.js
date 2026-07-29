@@ -5,6 +5,7 @@ const Plans = require("../models-v2/plans_Mongoose");
 const PlanFeatures = require("../models-v2/planFeatures_Mongoose");
 const Clients = require("../models-v2/clients_Mongoose");
 const Users = require("../models-v2/users_Mongoose");
+const Candidates = require("../models-v2/candidates_Mongoose");
 const _ = require("lodash");
 const { default: mongoose } = require("mongoose");
 const { awsUploadFiles } = require("../middleware/awsS3");
@@ -203,6 +204,18 @@ exports.userUpdate = async (req, res) => {
       await Users.updateOne({ id }, { $set: { ...user } });
     } else {
       await Users.updateOne({ id }, { $set: { image: image, ...user } });
+    }
+    // Candidate self-profile edits should never retrigger WhatsApp flows.
+    try {
+      await Candidates.updateMany(
+        { userId: id },
+        { $set: { whatsappMsg: true, updatedAt: new Date() } }
+      );
+    } catch (candidateSyncErr) {
+      console.info(
+        "userUpdate candidate sync error =>",
+        candidateSyncErr?.message || candidateSyncErr
+      );
     }
     await Clients.updateOne(
       { id: user?.clients?.id },
