@@ -14,10 +14,17 @@ MUST upload (order):
 11. routes-V2/favoriteToggle.js
 12. tmp/restart.txt  (touch/upload to restart Passenger)
 
-DO NOT upload old CLIENT_COMMENTS_BACKEND or old New-Updated candidate.js that still has "Msg API trigger (update)".
+MSG-ON-PROFILE-EDIT fix (minimum 2 files):
+deploy_temp/MSG_NO_CALL_ON_PROFILE_EDIT/
+
+FAVORITES-ONLY (minimum) upload package:
+deploy_temp/FAVORITES_FILTER_FIX_UPLOAD/  (or .zip next to it)
 
 After restart, test:
 - GET  /api/candidate/toggle-favorite-check  should return JSON ok
 - POST /api/candidate/toggle-favorite        should work (star)
+- Favorites quick-tab                        should list saved candidates
 - Candidate profile Save Changes             should NOT call Msg/WhatsApp API
 - New candidate create                       SHOULD still send Msg API
+
+DO NOT upload old CLIENT_COMMENTS_BACKEND or old New-Updated candidate.js that still has "Msg API trigger (update)".

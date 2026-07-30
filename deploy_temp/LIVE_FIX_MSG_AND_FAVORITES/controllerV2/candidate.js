@@ -977,10 +977,19 @@ exports.candidateUpdate = async (req, res) => {
       );
     }
 
-    // Msg API should only fire on CREATE, not on every profile edit.
-    // Candidate login profile updates must not re-trigger WhatsApp messages.
+    // HARD RULE: never call sendWelcomeWhatsapp / Msg API on profile edit.
+    // Live used to run "Msg API trigger (update)" here — that must stay removed.
+    // Both cURL configs (API 1 + API 2) are create-only.
+    console.info(
+      "candidateUpdate: Msg API skipped (create-only). candidateId:",
+      id
+    );
 
-    res.json({ msg: "success" });
+    res.json({
+      msg: "success",
+      msgApiTriggered: false,
+      msgApiPolicy: "create_only",
+    });
   } catch (err) {
     console.log("candidate update", err);
     res.json({ columns: err?.columns, constraint: err?.constraint });
@@ -1498,17 +1507,19 @@ exports.getCandidates = async (req, res) => {
       {
         $lookup: {
           from: "savedCandidates",
-          localField: "id",
-          foreignField: "candidateId",
-          as: "savedCandidates",
+          let: { cid: { $toString: "$id" } },
           pipeline: [
             {
               $match: {
+                $expr: {
+                  $eq: [{ $toString: "$candidateId" }, "$$cid"],
+                },
                 userId: String(userId2),
-                ...(agencyId ? { agencyId: String(agencyId) } : {}),
               },
             },
+            { $limit: 1 },
           ],
+          as: "savedCandidates",
         },
       },
       {

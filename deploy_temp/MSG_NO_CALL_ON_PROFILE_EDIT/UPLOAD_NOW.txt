@@ -1,0 +1,37 @@
+FIX: 2 cURL configs — NONE may fire on profile edit
+====================================================
+
+Problem:
+Live still has old candidate.js with:
+  "Msg API trigger (update)" -> sendWelcomeWhatsapp(...)
+So when candidate clicks Save Changes on /profile, Msg API runs.
+With 2 enabled cURLs, one (or both) WhatsApp messages still go out.
+
+Required behavior:
+- Profile Save / candidate UPDATE  -> 0 Msg API calls (both cURLs blocked)
+- New candidate CREATE            -> all ENABLED cURLs fire
+
+Upload to Hostinger nodejs (NOT public_html):
+
+1) 1_controllerV2\candidate.js
+   -> nodejs/controllerV2/candidate.js
+
+2) 2_middleware_whatsappMSG\welcomeMessage.js
+   -> nodejs/middleware/whatsappMSG/welcomeMessage.js
+
+3) LAST: 3_tmp\restart.txt
+   -> nodejs/tmp/restart.txt
+
+Wait 60s. Verify:
+
+A) On server file search — must be ZERO matches for:
+   Msg API trigger (update)
+
+B) Candidate profile Save Changes Network response should include:
+   "msgApiTriggered": false
+   "msgApiPolicy": "create_only"
+
+C) New candidate create still sends Msg (both enabled cURLs).
+
+Folder:
+C:\xampp\htdocs\steelblue-goshawk\deploy_temp\MSG_NO_CALL_ON_PROFILE_EDIT

@@ -28,7 +28,14 @@ exports.toggleFavoriteCandidate = async (req, res) => {
       matchQuery.agencyId = String(agencyId);
     }
 
-    const existing = await Saved_candidates.findOne(matchQuery);
+    // Prefer agency-scoped row; fall back to legacy rows without agencyId
+    let existing = await Saved_candidates.findOne(matchQuery);
+    if (!existing) {
+      existing = await Saved_candidates.findOne({
+        candidateId: String(candidateId),
+        userId: String(userId),
+      });
+    }
 
     if (existing) {
       await Saved_candidates.deleteOne({

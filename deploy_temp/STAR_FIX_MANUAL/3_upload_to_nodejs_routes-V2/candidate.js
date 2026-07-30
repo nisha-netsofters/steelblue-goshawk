@@ -4,6 +4,7 @@ const router = express.Router();
 
 const { verifyAuth } = require("../middleware/auth");
 const { daysCountMiddleware } = require("../middleware/subsciptionDaysCount");
+const candidateCtrl = require("../controllerV2/candidate");
 const {
   createCandidatesCsvFile,
   hiredCandidateforClients,
@@ -15,7 +16,8 @@ const {
   candidateUpdate,
   candidateView,
   checkCandidate,
-  changeCandidatesDataSructure, 
+  getPublicCandidateForApply,
+  changeCandidatesDataSructure,
   getallcandidates,
   BestMatchClientCandidates,
   getCandidateSelfStatistics,
@@ -24,15 +26,24 @@ const {
   parseResume,
   publicParseResume,
   getResumeExtractionConfigStatus,
-} = require("../controllerV2/candidate");
-const {
-  SavedCandidate,
-  toggleFavoriteCandidate,
-} = require("../controllerV2/saved_Candidates");
+} = candidateCtrl;
+
+let SavedCandidate;
+let toggleFavoriteCandidate;
+try {
+  const saved = require("../controllerV2/saved_Candidates");
+  SavedCandidate = saved.SavedCandidate;
+  toggleFavoriteCandidate = saved.toggleFavoriteCandidate;
+} catch (e) {
+  console.error("saved_Candidates load error:", e.message);
+}
 
 router.post("/candidate/create", verifyAuth, createCandidates);
 router.post("/candidate/create/csv", createCandidatesCsvFile);
 router.post("/candidate/check", checkCandidate);
+if (typeof getPublicCandidateForApply === "function") {
+  router.get("/candidate/public-apply/:id", getPublicCandidateForApply);
+}
 router.put("/candidate/update", verifyAuth, candidateUpdate);
 router.delete("/candidate/delete/:id", verifyAuth, deleteCandidate);
 router.post("/candidates", verifyAuth, getCandidates);
@@ -61,7 +72,10 @@ router.post("/candidate/publicCreate", createCandidates);
 router.post("/candidate/publicParseResume", publicParseResume);
 router.post("/candidate/public-parse-resume", publicParseResume);
 router.post("/candidate/savedcandidate", verifyAuth, SavedCandidate);
-router.post("/candidate/toggle-favorite", verifyAuth, toggleFavoriteCandidate);
+if (typeof toggleFavoriteCandidate === "function") {
+  router.post("/candidate/toggle-favorite", verifyAuth, toggleFavoriteCandidate);
+  router.post("/candidate/favorite", verifyAuth, toggleFavoriteCandidate);
+}
 router.get(
   "/candidate/statistics",
   verifyAuth,

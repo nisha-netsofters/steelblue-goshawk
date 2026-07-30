@@ -1047,14 +1047,24 @@ const sendSingleApi = async (api, candidate) => {
 
 /** Call every enabled cURL/API config for this candidate.
  *  ONLY allowed on create — profile edit/update must never send.
+ *  Even if 2+ cURLs are enabled, update/edit calls are fully blocked
+ *  (zero APIs fire). Create calls all enabled APIs in parallel.
  */
 exports.sendWelcomeWhatsapp = async (candidateInput, options = {}) => {
-  if (options.trigger !== "create") {
+  const trigger = options && options.trigger;
+  if (trigger !== "create") {
     console.info(
-      "Msg API BLOCKED — only create may send. Got trigger:",
-      options.trigger || "(none)"
+      "Msg API BLOCKED — profile edit/update must not send. Enabled cURLs ignored. Got trigger:",
+      trigger || "(none)",
+      "| candidateId:",
+      candidateInput?.id || candidateInput?._id || "(unknown)"
     );
-    return { skipped: true, reason: "not_create_trigger" };
+    return {
+      skipped: true,
+      reason: "not_create_trigger",
+      msgApiPolicy: "create_only",
+      blockedApis: true,
+    };
   }
 
   let candidate =

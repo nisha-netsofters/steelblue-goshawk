@@ -79,21 +79,24 @@ function getQuickFilterPostViewStages(quickFilter, userId, agencyId) {
   if (!quickFilter) return stages;
 
   if (quickFilter === "favorites") {
+    // Match by userId only — older saved rows may lack agencyId
     stages.push(
       {
         $lookup: {
           from: "savedCandidates",
-          localField: "id",
-          foreignField: "candidateId",
-          as: "_quickFavorite",
+          let: { cid: { $toString: "$id" } },
           pipeline: [
             {
               $match: {
+                $expr: {
+                  $eq: [{ $toString: "$candidateId" }, "$$cid"],
+                },
                 ...(userId ? { userId: String(userId) } : {}),
-                ...(agencyId ? { agencyId: String(agencyId) } : {}),
               },
             },
+            { $limit: 1 },
           ],
+          as: "_quickFavorite",
         },
       },
       {
