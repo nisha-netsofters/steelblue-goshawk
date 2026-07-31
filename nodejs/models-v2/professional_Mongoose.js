@@ -23,6 +23,7 @@ const professional = new Schema(
     currentlyWorking: String,
     currentSalary: String,
     currentEmployer: String,
+    currentCompany: String,
     english: String,
     preferedJobLocation: String,
   },

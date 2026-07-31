@@ -71,6 +71,7 @@ const candidates = new Schema(
       designation: String,
       jobCategoryId: { type: String, index: true },
       currentEmployer: String,
+      currentCompany: String,
       currentSalary: Number,
       expectedsalary: Number,
       noticePeriod: String,
