@@ -1,0 +1,15 @@
+UPLOAD STEPS
+
+BACKEND (steelblue-goshawk / nodejs):
+1) Upload middleware/whatsappMSG/welcomeMessage.js into nodejs/middleware/whatsappMSG/
+2) Upload tmp/restart.txt into nodejs/tmp/ (or touch restart)
+
+FRONTEND (peachpuff-snail / public_html):
+1) Upload everything from PROFILE_REDIRECT_FRONTEND into public_html (overwrite)
+2) Hard refresh browser (Ctrl+Shift+R)
+
+TEST:
+1) Open: /login?redirect=/uniqueworld/profile
+2) Login as candidate -> must open /uniqueworld/profile
+3) Open old link: /uniqueworld/candidate?id=ANY -> login/profile (not 404/dashboard)
+4) Send NEW WhatsApp msg so link becomes /login?redirect=/uniqueworld/profile

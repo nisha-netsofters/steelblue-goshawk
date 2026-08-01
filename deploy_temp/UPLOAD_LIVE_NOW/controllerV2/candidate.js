@@ -3232,15 +3232,6 @@ exports.candidateJobMatching = async (req, res) => {
     if (jobCategoryId) {
       matchConditions.$and.push({ jobCategoryId: jobCategoryId });
     }
-    // Only show jobs that are open or published (legacy docs without status treated as open)
-    matchConditions.$and.push({
-      $or: [
-        { postingStatus: { $in: ["open", "published"] } },
-        { postingStatus: { $exists: false } },
-        { postingStatus: null },
-        { postingStatus: "" },
-      ],
-    });
     // if (industriesId) {
     //   matchConditions.$and.push({ industriesId: industriesId });
     // }
@@ -3275,7 +3266,7 @@ exports.candidateJobMatching = async (req, res) => {
               // Job category match (30 points)
               { $cond: [{ $eq: ["$jobCategoryId", jobCategoryId] }, 30, 0] },
 
-              // Salary match (20 points) - range, single salary field, or negotiable
+              // Salary match (20 points) - within range or negotiable
               {
                 $cond: [
                   {
@@ -3284,55 +3275,6 @@ exports.candidateJobMatching = async (req, res) => {
                         $and: [
                           { $lte: ["$salaryRangeStart", expectedSalary] },
                           { $gte: ["$salaryRangeEnd", expectedSalary] }
-                        ]
-                      },
-                      {
-                        $and: [
-                          { $gt: [expectedSalary, 0] },
-                          {
-                            $eq: [
-                              {
-                                $convert: {
-                                  input: "$salary",
-                                  to: "double",
-                                  onError: -1,
-                                  onNull: -1
-                                }
-                              },
-                              expectedSalary
-                            ]
-                          }
-                        ]
-                      },
-                      {
-                        $and: [
-                          { $gt: [expectedSalary, 0] },
-                          {
-                            $lte: [
-                              {
-                                $convert: {
-                                  input: "$salary",
-                                  to: "double",
-                                  onError: 0,
-                                  onNull: 0
-                                }
-                              },
-                              expectedSalary
-                            ]
-                          },
-                          {
-                            $gt: [
-                              {
-                                $convert: {
-                                  input: "$salary",
-                                  to: "double",
-                                  onError: 0,
-                                  onNull: 0
-                                }
-                              },
-                              0
-                            ]
-                          }
                         ]
                       },
                       { $eq: ["$negotiable", "yes"] }

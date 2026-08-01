@@ -716,7 +716,7 @@ const sanitizeTemplatePayload = (payload, options = {}) => {
   }
 
   // Restore locked identity (prevents unfilled text ever becoming template name)
-  if (lockedName) {
+  if (lockedName && !/\s/.test(lockedName) && lockedName.length <= 512) {
     template.name = lockedName;
   }
   if (lockedLanguage) {
@@ -733,20 +733,18 @@ const sanitizeTemplatePayload = (payload, options = {}) => {
 
   next.template = template;
 
-  // Final guard
+  // If name looks like resolved unfilled text (spaces/commas), clear it — caller will restore
   if (
     next.template?.name &&
-    (next.template.name.length > 60 ||
-      /\s{2,}/.test(next.template.name) ||
-      /Professional Information|Personal Information|unfilled/i.test(
-        next.template.name
-      ))
+    (/\s/.test(next.template.name) ||
+      next.template.name.includes(",") ||
+      next.template.name.length > 80)
   ) {
     console.info(
-      "Msg API: refusing corrupt template.name, restoring lock:",
-      next.template.name.slice(0, 80)
+      "Msg API: corrupt template.name detected, clearing for restore:",
+      String(next.template.name).slice(0, 80)
     );
-    if (lockedName && lockedName.length <= 60) {
+    if (lockedName && !/\s/.test(lockedName) && lockedName.length <= 80) {
       next.template.name = lockedName;
     }
   }
@@ -1069,30 +1067,41 @@ const sendSingleApi = async (api, candidate) => {
       candidate?.id
     );
 
+    // Read template identity from RAW config — never run placeholder resolution on these.
+    // Template can be named "unfilled_fields" which collides with {{unfilled_fields}} placeholder.
+    const getRawParam = (key) => {
+      const row = (api.bodyParams || []).find(
+        (p) => String(p?.key || "").trim() === key
+      );
+      return row?.value != null ? String(row.value).trim() : "";
+    };
+    const rawTemplateName = getRawParam("template.name");
+    const rawLangCode = getRawParam("template.language.code") || "en";
+
     let payload = buildPayloadFromParams(api.bodyParams, candidate);
     const recipientKey = api.recipientKey || "to";
     setNestedValue(payload, recipientKey, to);
 
-    // Lock template identity BEFORE any further mutation
-    const lockedTemplateName = String(payload?.template?.name || "").trim();
-    const lockedTemplateLanguage = payload?.template?.language
-      ? { ...payload.template.language }
-      : null;
+    if (!payload.template || typeof payload.template !== "object") {
+      payload.template = {};
+    }
+    // FORCE correct template name before anything else touches the payload
+    if (rawTemplateName) {
+      payload.template.name = rawTemplateName;
+    }
+    payload.template.language = {
+      ...(payload.template.language || {}),
+      code: rawLangCode,
+    };
 
     // Only resolve placeholders inside components — never re-process template.name
-    if (payload?.template?.components) {
+    if (payload.template.components) {
       payload.template.components = deepResolvePlaceholders(
         payload.template.components,
         candidate
       );
     }
-
-    if (payload?.template) {
-      if (lockedTemplateName) payload.template.name = lockedTemplateName;
-      if (lockedTemplateLanguage) {
-        payload.template.language = lockedTemplateLanguage;
-      }
-    }
+    if (rawTemplateName) payload.template.name = rawTemplateName;
 
     const parameterMode = api.parameterMode || "auto";
     let sanitized = sanitizeTemplatePayload(payload, {
@@ -1100,14 +1109,6 @@ const sendSingleApi = async (api, candidate) => {
       candidateId: candidate?.id,
       candidate,
     });
-
-    // Enforce lock again after sanitize
-    if (sanitized?.payload?.template && lockedTemplateName) {
-      sanitized.payload.template.name = lockedTemplateName;
-      if (lockedTemplateLanguage) {
-        sanitized.payload.template.language = lockedTemplateLanguage;
-      }
-    }
 
     if (sanitized.error) {
       await logMessage({
@@ -1122,9 +1123,28 @@ const sendSingleApi = async (api, candidate) => {
       return { success: false, error: sanitized.error, ...apiMeta };
     }
 
-    let finalPayload = sanitized.payload;
+    const forceTemplateIdentity = (data) => {
+      if (!data || typeof data !== "object") return data;
+      const next = { ...data };
+      const tpl = { ...(next.template || {}) };
+      if (rawTemplateName) tpl.name = rawTemplateName;
+      tpl.language = {
+        ...(tpl.language || {}),
+        code: rawLangCode,
+      };
+      next.template = tpl;
+      return next;
+    };
+
+    let finalPayload = forceTemplateIdentity(sanitized.payload);
     let usedNamed = sanitized.useNamed;
 
+    console.info(
+      "Msg API final template.name =>",
+      finalPayload?.template?.name,
+      "| api:",
+      api.name
+    );
     console.info(
       "Msg API payload template.components =>",
       JSON.stringify(finalPayload?.template?.components || null)
@@ -1135,6 +1155,8 @@ const sendSingleApi = async (api, candidate) => {
     const agent = new https.Agent({ rejectUnauthorized: false });
 
     const doRequest = async (data) => {
+      // Always re-apply identity right before HTTP call (retries included)
+      const safeData = forceTemplateIdentity(data);
       const axiosConfig = {
         method,
         url: api.apiUrl,
@@ -1143,9 +1165,9 @@ const sendSingleApi = async (api, candidate) => {
         timeout: 45000,
       };
       if (method === "get") {
-        axiosConfig.params = data;
+        axiosConfig.params = safeData;
       } else {
-        axiosConfig.data = data;
+        axiosConfig.data = safeData;
       }
       return axios(axiosConfig);
     };

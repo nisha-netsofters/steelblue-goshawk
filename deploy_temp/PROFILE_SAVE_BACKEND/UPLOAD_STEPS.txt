@@ -1,0 +1,10 @@
+﻿LIVE SAVE FIX - BACKEND (required)
+
+Cause: currentCompany was not in Mongo schema, so save toast showed success but value was stripped.
+
+Upload into nodejs/ folder:
+1) models-v2/candidates_Mongoose.js
+2) models-v2/professional_Mongoose.js
+3) tmp/restart.txt  (triggers app restart)
+
+Then hard refresh browser and save Current Company again.
