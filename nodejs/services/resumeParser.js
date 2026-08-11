@@ -1,4 +1,6 @@
 const pdfParse = require("pdf-parse");
+const mammoth = require("mammoth");
+const WordExtractor = require("word-extractor");
 const Tesseract = require("tesseract.js");
 const axios = require("axios");
 const { getActiveOcrProvider, getActiveAiProvider } = require("../middleware/apiIntegration/configResolver");
@@ -12,6 +14,33 @@ async function extractTextFromPdf(buffer) {
     return data.text || "";
   } catch (error) {
     console.error("PDF parse error, falling back to empty text:", error);
+    return "";
+  }
+}
+
+/**
+ * Extracts raw text from a DOCX buffer (Office Open XML).
+ */
+async function extractTextFromDocx(buffer) {
+  try {
+    const result = await mammoth.extractRawText({ buffer });
+    return (result && result.value) || "";
+  } catch (error) {
+    console.error("DOCX parse error, falling back to empty text:", error);
+    return "";
+  }
+}
+
+/**
+ * Extracts raw text from a legacy DOC buffer.
+ */
+async function extractTextFromDoc(buffer) {
+  try {
+    const extractor = new WordExtractor();
+    const extracted = await extractor.extract(buffer);
+    return (extracted && extracted.getBody && extracted.getBody()) || "";
+  } catch (error) {
+    console.error("DOC parse error, falling back to empty text:", error);
     return "";
   }
 }
@@ -718,14 +747,31 @@ function parseAiJsonResponse(rawJsonText) {
 /**
  * Parse resume using configured AI only (no regex auto-fill success path).
  */
-async function parseResumeData(fileData, extractionSource = "application/pdf") {
+async function parseResumeData(fileData, extractionSource = "application/pdf", fileName = "") {
   let textStr = "";
   let sourceLabel = extractionSource;
 
   if (Buffer.isBuffer(fileData)) {
-    const isPdf = extractionSource && extractionSource.toLowerCase().includes("pdf");
-    const isImage = extractionSource && (extractionSource.toLowerCase().includes("image") || extractionSource.toLowerCase().includes("png") || extractionSource.toLowerCase().includes("jpg") || extractionSource.toLowerCase().includes("jpeg"));
-    
+    const mime = String(extractionSource || "").toLowerCase();
+    const name = String(fileName || "").toLowerCase();
+    const isPdf = mime.includes("pdf") || name.endsWith(".pdf");
+    const isImage =
+      mime.includes("image") ||
+      mime.includes("png") ||
+      mime.includes("jpg") ||
+      mime.includes("jpeg") ||
+      /\.(png|jpe?g)$/.test(name);
+    const isDocx =
+      mime.includes("wordprocessingml") ||
+      mime.includes("docx") ||
+      name.endsWith(".docx");
+    // Legacy .doc (also when browser sends empty/octet-stream mime)
+    const isDoc =
+      !isDocx &&
+      (mime.includes("msword") ||
+        mime === "application/msword" ||
+        name.endsWith(".doc"));
+
     if (isPdf) {
       console.log("Extracting text from PDF buffer...");
       textStr = await extractTextFromPdf(fileData);
@@ -734,6 +780,14 @@ async function parseResumeData(fileData, extractionSource = "application/pdf") {
       console.log("Extracting text from Image buffer using OCR...");
       textStr = await extractTextWithOcr(fileData);
       sourceLabel = "OCR Extraction";
+    } else if (isDocx) {
+      console.log("Extracting text from DOCX buffer...");
+      textStr = await extractTextFromDocx(fileData);
+      sourceLabel = "DOCX Extraction";
+    } else if (isDoc) {
+      console.log("Extracting text from DOC buffer...");
+      textStr = await extractTextFromDoc(fileData);
+      sourceLabel = "DOC Extraction";
     } else {
       console.log("Unknown mimetype, converting buffer directly to string...");
       textStr = fileData.toString("utf8");
@@ -745,7 +799,7 @@ async function parseResumeData(fileData, extractionSource = "application/pdf") {
   }
 
   if (!textStr.trim()) {
-    const err = new Error("Could not extract text from the uploaded resume. Please upload a valid PDF or image.");
+    const err = new Error("Could not extract text from the uploaded resume. Please upload a valid PDF, DOC, DOCX, or image.");
     err.code = "EMPTY_RESUME_TEXT";
     throw err;
   }

@@ -3624,7 +3624,11 @@ exports.parseResume = async (req, res) => {
       return res.json({ success: false, error: "No resume file uploaded" });
     }
 
-    const { parsedData, parser, extractionSource, confidence } = await parseResumeData(file.data, file.mimetype);
+    const { parsedData, parser, extractionSource, confidence } = await parseResumeData(
+      file.data,
+      file.mimetype,
+      file.name
+    );
     return res.json({ success: true, data: parsedData, parser, extractionSource, confidence });
   } catch (error) {
     console.error("parseResume error:", error);
@@ -3653,7 +3657,11 @@ exports.publicParseResume = async (req, res) => {
       return res.json({ success: false, error: "No resume file uploaded" });
     }
 
-    const { parsedData, parser, extractionSource, confidence } = await parseResumeData(file.data, file.mimetype);
+    const { parsedData, parser, extractionSource, confidence } = await parseResumeData(
+      file.data,
+      file.mimetype,
+      file.name
+    );
     return res.json({ success: true, data: parsedData, parser, extractionSource, confidence });
   } catch (error) {
     console.error("publicParseResume error:", error);
