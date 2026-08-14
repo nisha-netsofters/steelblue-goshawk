@@ -17,9 +17,6 @@ const isApiEnabled = (api) => {
   return false;
 };
 
-const getApiAudience = (api) =>
-  api?.audience === "client" ? "client" : "candidate";
-
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const getMultiApiGapMs = () => {
@@ -1007,7 +1004,6 @@ exports.normalizeConfigDoc = (config) => {
         countryCodePrefix: api.countryCodePrefix || "91",
         recipientKey: api.recipientKey || "to",
         parameterMode: api.parameterMode || "auto",
-        audience: api.audience === "client" ? "client" : "candidate",
       })),
     };
   }
@@ -1460,9 +1456,7 @@ exports.sendWelcomeWhatsapp = async (candidateInput, options = {}) => {
 
   const config = await exports.getWelcomeWhatsappConfig();
   const apis = Array.isArray(config.apis) ? config.apis : [];
-  const enabledApis = apis.filter(
-    (a) => isApiEnabled(a) && getApiAudience(a) !== "client"
-  );
+  const enabledApis = apis.filter((a) => isApiEnabled(a));
 
   console.info(
     "Msg API enabled configs =>",
@@ -1514,8 +1508,7 @@ exports.sendWelcomeWhatsapp = async (candidateInput, options = {}) => {
 };
 
 /**
- * Client add → only Msg API configs with audience "client".
- * Uses the same Super Admin /superadmin/msg cURL mapping (not hardcoded).
+ * Client add → same Super Admin Msg API configs (separate config per template).
  */
 exports.sendClientWelcomeWhatsapp = async (clientInput) => {
   const client =
@@ -1538,9 +1531,7 @@ exports.sendClientWelcomeWhatsapp = async (clientInput) => {
 
   const config = await exports.getWelcomeWhatsappConfig();
   const apis = Array.isArray(config.apis) ? config.apis : [];
-  const enabledApis = apis.filter(
-    (a) => isApiEnabled(a) && getApiAudience(a) === "client"
-  );
+  const enabledApis = apis.filter((a) => isApiEnabled(a));
 
   console.info(
     "Client Msg API enabled configs =>",
@@ -1557,9 +1548,9 @@ exports.sendClientWelcomeWhatsapp = async (clientInput) => {
       candidateId: person.id,
       mobile: person.mobile,
       status: "skipped",
-      error: "No enabled Client Msg API — set Send to = Client (customer) and enable",
+      error: "No enabled Msg API — turn on at least one cURL config",
     });
-    return { skipped: true, reason: "no_enabled_client_apis" };
+    return { skipped: true, reason: "no_enabled_apis" };
   }
 
   const gapMs = getMultiApiGapMs();

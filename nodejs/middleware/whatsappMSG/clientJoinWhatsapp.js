@@ -3,7 +3,7 @@ const {
 } = require("./welcomeMessage");
 
 /**
- * New client add → Super Admin Msg API configs with audience = client.
+ * New client add → Super Admin Msg API configs (same list as candidate; map placeholders in each cURL).
  */
 exports.sendClientJoinWhatsapp = async (client) => {
   try {
