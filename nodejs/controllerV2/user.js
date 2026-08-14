@@ -148,65 +148,97 @@ exports.passwordUpdate = async (req, res) => {
   }
 };
 
+const pickUserUpdateFields = (body, uploadedImageUrl) => {
+  const src = body || {};
+  const next = {};
+  const keys = [
+    "name",
+    "email",
+    "mobile",
+    "address",
+    "comments",
+    "roleId",
+    "subscriptionId",
+    "paymentMethod",
+    "planId",
+    "cityId",
+    "stateId",
+    "city",
+    "state",
+    "BillingDetails",
+  ];
+  for (const key of keys) {
+    if (src[key] !== undefined && src[key] !== "undefined" && src[key] !== "null") {
+      next[key] = src[key];
+    }
+  }
+  if (uploadedImageUrl) {
+    next.image = uploadedImageUrl;
+  } else if (
+    typeof src.image === "string" &&
+    src.image.trim() !== "" &&
+    src.image !== "undefined" &&
+    !src.image.startsWith("[object")
+  ) {
+    next.image = src.image;
+  }
+  return next;
+};
+
 exports.userUpdate = async (req, res) => {
   const agencyIdHeader = req.headers["agencyid"];
   try {
-    let { image, role, agencyId, ...user } = req.body;
-    if (
-      user?.industries_relation?.length == 0 ||
-      user?.jobCategory_relation?.length == 0
-    ) {
-      res.json({ msg: "Something went wrong" });
-    }
+    const body = req.body || {};
+    const { image, role, agencyId, clients, subscription, ...user } = body;
     const id = req.params.id;
-    const existingClientsEmail = await Users.aggregate([
-      {
-        $project: { password: 0 },
-      },
-      {
-        $match: {
-          email: user.email,
-          agencyId: agencyIdHeader,
-          id: { $ne: id },
+    if (user.email) {
+      const existingClientsEmail = await Users.aggregate([
+        {
+          $project: { password: 0 },
         },
-      },
-    ]);
-    if (existingClientsEmail.length > 0) {
-      return res.json({
-        error: "Your email is already in used",
-      });
-    }
-    const existingClientsMobile = await Users.aggregate([
-      {
-        $match: {
-          email: user.mobile,
-          agencyId: agencyIdHeader,
-          id: { $ne: id },
+        {
+          $match: {
+            email: user.email,
+            agencyId: agencyIdHeader,
+            id: { $ne: id },
+          },
         },
-      },
-    ]);
-    if (existingClientsMobile.length > 0) {
-      return res.json({
-        error: "Your Mobile number is already in used",
-      });
+      ]);
+      if (existingClientsEmail.length > 0) {
+        return res.json({
+          error: "Your email is already in used",
+        });
+      }
     }
+    if (user.mobile) {
+      const existingClientsMobile = await Users.aggregate([
+        {
+          $match: {
+            mobile: user.mobile,
+            agencyId: agencyIdHeader,
+            id: { $ne: id },
+          },
+        },
+      ]);
+      if (existingClientsMobile.length > 0) {
+        return res.json({
+          error: "Your Mobile number is already in used",
+        });
+      }
+    }
+    let uploadedImageUrl = null;
     if (req?.files?.image) {
       let resp = await awsUploadFiles(req.files.image);
       if (resp?.success && resp?.url) {
-        user.image = `${resp.url}`;
+        uploadedImageUrl = `${resp.url}`;
       }
     }
-    // Prefer freshly uploaded file URL; otherwise keep body image when it is a real URL string
-    const hasUsableBodyImage =
-      typeof image === "string" &&
-      image !== "undefined" &&
-      image.trim() !== "" &&
-      !image.startsWith("[object");
-
-    if (user.image || !hasUsableBodyImage) {
-      await Users.updateOne({ id }, { $set: { ...user } });
-    } else {
-      await Users.updateOne({ id }, { $set: { image: image, ...user } });
+    const updateFields = pickUserUpdateFields(
+      { ...user, image },
+      uploadedImageUrl
+    );
+    if (Object.keys(updateFields).length > 0) {
+      await Users.updateOne({ id }, { $set: updateFields });
     }
     // Candidate self-profile edits should never retrigger WhatsApp flows.
     try {
@@ -220,35 +252,38 @@ exports.userUpdate = async (req, res) => {
         candidateSyncErr?.message || candidateSyncErr
       );
     }
-    await Clients.updateOne(
-      { id: user?.clients?.id },
-      {
-        $set: {
-          companyowner: user?.name,
-          mobile: user?.mobile,
-          email: user?.email,
-          address: user?.address,
-          cityId: user?.cityId,
-          stateId: user?.stateId,
-          city: user?.city,
-          state: user?.state,
-        },
-      }
-    ).then((res) => console.log("res", res));
+    if (clients?.id && user?.name) {
+      await Clients.updateOne(
+        { id: clients.id },
+        {
+          $set: {
+            companyowner: user?.name,
+            mobile: user?.mobile,
+            email: user?.email,
+            address: user?.address,
+            cityId: user?.cityId,
+            stateId: user?.stateId,
+            city: user?.city,
+            state: user?.state,
+          },
+        }
+      );
+    }
+    const resolvedAgencyId = agencyId || agencyIdHeader;
     if (
       user?.planId != "null" &&
       user?.planId != "undefined" &&
       user?.planId != undefined &&
       user?.planId != null
     ) {
-      if (user?.planId !== user?.subscription?.planId) {
+      if (user?.planId !== subscription?.planId) {
         const planData = await Plans.findOne({ id: user?.planId });
         const prevPaymentData = await Clients.findOne({
-          userId: user?.id,
+          userId: user?.id || id,
         });
         const paymentObj = {
-          userId: user?.id,
-          paymentId: `${Date.now()}${user?.mobile?.slice(0, 3)}`,
+          userId: user?.id || id,
+          paymentId: `${Date.now()}${String(user?.mobile || "").slice(0, 3)}`,
           entity: "payment",
           amount: planData?.price,
           status: "captured",
@@ -262,7 +297,7 @@ exports.userUpdate = async (req, res) => {
           contact: user?.mobile,
           notes: JSON.stringify({
             customerId: prevPaymentData?.razorpayCustId,
-            userId: user?.id,
+            userId: user?.id || id,
             clientId: prevPaymentData?.id,
             planId: user?.planId,
           }),
@@ -277,7 +312,7 @@ exports.userUpdate = async (req, res) => {
         };
         const objectid2 = new mongoose.Types.ObjectId();
         const paymentData = await Payments.create({
-          agencyId: agencyId,
+          agencyId: resolvedAgencyId,
           id: objectid2,
           _id: objectid2,
           ...paymentObj,
@@ -290,26 +325,26 @@ exports.userUpdate = async (req, res) => {
 
           if (
             (planData.planName == "free" || planData.planName == "Trial") &&
-            (user?.subscription?.plan?.planName == "free" ||
-              user?.subscription?.plan?.planName == "Trial")
+            (subscription?.plan?.planName == "free" ||
+              subscription?.plan?.planName == "Trial")
           ) {
             subscriptionObj = {
               planId: user?.planId,
-              userId: user?.id,
+              userId: user?.id || id,
               payment_id: paymentData?.id,
               active_plan:
                 _.toLower(planData?.planName) == "free" ||
                 _.toLower(planData?.planName) == "trial"
                   ? false
                   : true,
-              resume_download_count: user?.subscription?.resume_download_count,
+              resume_download_count: subscription?.resume_download_count,
               interview_request_count: planFeaturesData?.interview_count,
               timeDuration: planFeaturesData?.validate_days,
             };
           } else {
             subscriptionObj = {
               planId: user?.planId,
-              userId: user?.id,
+              userId: user?.id || id,
               payment_id: paymentData?.id,
               active_plan:
                 _.toLower(planData?.planName) == "free" ||
@@ -328,14 +363,14 @@ exports.userUpdate = async (req, res) => {
 
           const objectid = new mongoose.Types.ObjectId();
           const subsciptionData = await Subscriptions.create({
-            agencyId: agencyId,
+            agencyId: resolvedAgencyId,
             id: objectid,
             _id: objectid,
             ...subscriptionObj,
           });
 
           await Users.updateOne(
-            { id: user?.id },
+            { id: user?.id || id },
             {
               $set: {
                 subscriptionId: subsciptionData.id,
