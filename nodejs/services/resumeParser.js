@@ -480,6 +480,24 @@ async function queryGemini(text, credentials) {
         err.message ||
         "Unknown Gemini error";
       errors.push(`${activeModel}: ${apiMsg}`);
+      console.error(
+        "Gemini request failed =>",
+        JSON.stringify({
+          model: activeModel,
+          status: status || null,
+          code: err.code || null,
+          apiMsg,
+          hasResponse: Boolean(err.response),
+        })
+      );
+
+      if (!err.response) {
+        const net = new Error(
+          `Cannot reach Google Gemini from this server (${err.code || apiMsg}). Hostinger outbound access to generativelanguage.googleapis.com may be blocked.`
+        );
+        net.code = "AI_NETWORK_ERROR";
+        throw net;
+      }
 
       const normalized = buildAiError("gemini", status, apiMsg);
       if (normalized.code === "AI_API_KEY_INVALID") {
