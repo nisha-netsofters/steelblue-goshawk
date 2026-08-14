@@ -16,6 +16,9 @@ const API_BASE_URL = process.env.PAYMENT_HOST_URL;
 const redirectUrlendpoint = `${process.env.PAYMENT_FRONTEND_REDIRECT_URL_ENDPOINT}/`;
 const callbackUrl = `${process.env.PAYMENT_SERVER_REDIRECT_URL}`;
 const redirectUrlmailUrl = process.env.PAYMENT_FRONTEND_REDIRECT_MAIN_URL;
+const {
+  sendPlanAssignWhatsapp,
+} = require("../middleware/whatsappMSG/clientJoinWhatsapp");
 
 exports.paymentCreate = async (req, res) => {
   //   console.log("-------------------");
@@ -267,6 +270,19 @@ exports.serverToServerCall = async (req, res) => {
           },
         }
       );
+      try {
+        sendPlanAssignWhatsapp(userdetails[0]?.merchantUserId).catch((err) => {
+          console.info(
+            "sendPlanAssignWhatsapp error =>",
+            err?.message || err
+          );
+        });
+      } catch (msgErr) {
+        console.info(
+          "sendPlanAssignWhatsapp trigger error =>",
+          msgErr?.message || msgErr
+        );
+      }
       return res.status(200).send({
         response: parsedResponse,
         subsciptionData,

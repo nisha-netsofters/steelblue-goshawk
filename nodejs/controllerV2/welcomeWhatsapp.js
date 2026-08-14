@@ -47,6 +47,9 @@ const normalizeApi = (api, idx = 0) => {
       ? api.parameterMode
       : "auto",
     audience: (() => {
+      if (api.id === "msg-client-plan" || api.audience === "plan") {
+        return "plan";
+      }
       if (api.id === "msg-client-welcome" || api.audience === "client") {
         return "client";
       }

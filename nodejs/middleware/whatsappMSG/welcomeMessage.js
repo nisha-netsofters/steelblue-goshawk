@@ -18,6 +18,7 @@ const isApiEnabled = (api) => {
 };
 
 const getApiAudience = (api) => {
+  if (api?.id === "msg-client-plan" || api?.audience === "plan") return "plan";
   if (api?.id === "msg-client-welcome") return "client";
   if (
     api?.id === "msg-customer-welcome" ||
@@ -1014,6 +1015,11 @@ const MSG_CONFIG_SLOTS_BACKEND = [
     audience: "candidate",
     name: "Customer Unfilled Fields",
   },
+  {
+    id: "msg-client-plan",
+    audience: "plan",
+    name: "Plan Assign",
+  },
 ];
 
 const remapLegacySavedApi = (api) => {
@@ -1083,6 +1089,9 @@ const normalizeApisToSlots = (saved) => {
     if (matchIdx >= 0) {
       usedIndexes.add(matchIdx);
       return mapApiRow(list[matchIdx], slot);
+    }
+    if (slot.audience === "plan") {
+      return emptySlotApi(slot);
     }
     const match = pickUnused();
     if (match) return mapApiRow(match, slot);
@@ -1610,9 +1619,9 @@ exports.sendWelcomeWhatsapp = async (candidateInput, options = {}) => {
 };
 
 /**
- * Client add → same Super Admin Msg API configs (separate config per template).
+ * Client / plan WhatsApp using Super Admin Msg cURL for the given trigger.
  */
-exports.sendClientWelcomeWhatsapp = async (clientInput) => {
+const sendClientLikeWhatsapp = async (clientInput, trigger, logLabel) => {
   const client =
     clientInput && typeof clientInput.toObject === "function"
       ? clientInput.toObject()
@@ -1620,25 +1629,25 @@ exports.sendClientWelcomeWhatsapp = async (clientInput) => {
 
   const person = {
     id: client.id || client._id,
-    firstname: pickStr(client.companyowner, client.companyOwner, client.companyName),
+    firstname: pickStr(client.companyowner, client.companyOwner, client.companyName, client.name),
     lastname: "",
-    name: pickStr(client.companyowner, client.companyName),
+    name: pickStr(client.companyowner, client.companyName, client.name),
     mobile: pickStr(client.mobile, client.phone),
     email: pickStr(client.email),
     city: pickStr(client.city),
     companyName: pickStr(client.companyName),
-    companyowner: pickStr(client.companyowner, client.companyOwner),
+    companyowner: pickStr(client.companyowner, client.companyOwner, client.name),
     agencyId: client.agencyId,
   };
 
   const config = await exports.getWelcomeWhatsappConfig();
   const apis = Array.isArray(config.apis) ? config.apis : [];
   const enabledApis = apis.filter(
-    (a) => isApiEnabled(a) && apiMatchesTrigger(a, "client")
+    (a) => isApiEnabled(a) && apiMatchesTrigger(a, trigger)
   );
 
   console.info(
-    "Client Msg API enabled configs =>",
+    `${logLabel} enabled configs =>`,
     enabledApis.length,
     "/",
     apis.length,
@@ -1652,7 +1661,7 @@ exports.sendClientWelcomeWhatsapp = async (clientInput) => {
       candidateId: person.id,
       mobile: person.mobile,
       status: "skipped",
-      error: "No enabled Msg API — turn on at least one cURL config",
+      error: `No enabled ${logLabel} — turn on at least one cURL config`,
     });
     return { skipped: true, reason: "no_enabled_apis" };
   }
@@ -1679,4 +1688,16 @@ exports.sendClientWelcomeWhatsapp = async (clientInput) => {
 
   return { success: results.some((r) => r.success), results };
 };
+
+/**
+ * Client add → Super Admin Msg API configs (separate config per template).
+ */
+exports.sendClientWelcomeWhatsapp = async (clientInput) =>
+  sendClientLikeWhatsapp(clientInput, "client", "Client Msg API");
+
+/**
+ * Plan assign / subscription create → Super Admin Plan Assign cURL only.
+ */
+exports.sendPlanAssignWhatsapp = async (clientInput) =>
+  sendClientLikeWhatsapp(clientInput, "plan", "Plan Msg API");
 

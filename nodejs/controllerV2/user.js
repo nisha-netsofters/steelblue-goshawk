@@ -11,6 +11,9 @@ const { default: mongoose } = require("mongoose");
 const { awsUploadFiles } = require("../middleware/awsS3");
 const bcrypt = require("bcryptjs");
 const { enqueueEmailJob } = require("../mq/emailProducer");
+const {
+  sendPlanAssignWhatsapp,
+} = require("../middleware/whatsappMSG/clientJoinWhatsapp");
 
 exports.createUser = async (req, res) => {
   let { ...user } = req.body;
@@ -340,6 +343,19 @@ exports.userUpdate = async (req, res) => {
               },
             }
           );
+          try {
+            sendPlanAssignWhatsapp(user?.id || id).catch((err) => {
+              console.info(
+                "sendPlanAssignWhatsapp error =>",
+                err?.message || err
+              );
+            });
+          } catch (msgErr) {
+            console.info(
+              "sendPlanAssignWhatsapp trigger error =>",
+              msgErr?.message || msgErr
+            );
+          }
         }
       }
     }
