@@ -540,10 +540,10 @@ function buildAiError(provider, status, apiMsg = "") {
     return err;
   }
 
-  if (status === 404 || msg.includes("not found") || msg.includes("is not found")) {
+  if (status === 404 || msg.includes("not found") || msg.includes("is not found") || msg.includes("no longer available")) {
     err.code = "AI_MODEL_INVALID";
     err.message =
-      "Invalid AI Model. Please set a valid Model (recommended: gemini-3.5-flash) in Super Admin → OCR & API Configuration.";
+      "Invalid or deprecated AI Model. Please set gemini-3.1-flash-lite in Super Admin → OCR & API Configuration.";
     return err;
   }
 
@@ -560,12 +560,12 @@ async function queryGemini(text, credentials) {
   const { apiKey, model } = credentials;
   const preferred = (model || "").trim();
   const fallbackModels = [
+    "gemini-3.1-flash-lite",
+    "gemini-flash-lite-latest",
     "gemini-3.5-flash",
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-2.0-flash",
-    "gemini-1.5-flash",
-    "gemini-1.5-pro",
+    "gemini-pro-latest",
+    "gemini-2.5-pro",
+    "gemini-flash-latest",
   ];
   const modelsToTry = [
     ...new Set(
@@ -575,77 +575,110 @@ async function queryGemini(text, credentials) {
   const prompt = getAiPrompt(text);
   const errors = [];
   let authError = null;
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   for (const activeModel of modelsToTry) {
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${activeModel}:generateContent?key=${apiKey}`;
-      const response = await axios.post(url, {
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0.1
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt > 0) {
+        console.warn(`Retrying Gemini model ${activeModel} after 503 (attempt ${attempt + 1})...`);
+        await sleep(2500);
+      }
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${activeModel}:generateContent?key=${apiKey}`;
+        const response = await axios.post(url, {
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            responseMimeType: "application/json",
+            temperature: 0.1
+          }
+        });
+        const resText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        if (resText) return resText;
+        errors.push(`${activeModel}: empty response`);
+        break;
+      } catch (err) {
+        const status = err.response?.status;
+        const apiMsg =
+          err.response?.data?.error?.message ||
+          err.message ||
+          "Unknown Gemini error";
+        errors.push(`${activeModel}: ${apiMsg}`);
+        console.error(
+          "Gemini request failed =>",
+          JSON.stringify({
+            model: activeModel,
+            status: status || null,
+            code: err.code || null,
+            apiMsg,
+            hasResponse: Boolean(err.response),
+            attempt: attempt + 1,
+          })
+        );
+
+        if (!err.response) {
+          const net = new Error(
+            `Cannot reach Google Gemini from this server (${err.code || apiMsg}). Hostinger outbound access to generativelanguage.googleapis.com may be blocked.`
+          );
+          net.code = "AI_NETWORK_ERROR";
+          throw net;
         }
-      });
-      const resText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      if (resText) return resText;
-      errors.push(`${activeModel}: empty response`);
-    } catch (err) {
-      const status = err.response?.status;
-      const apiMsg =
-        err.response?.data?.error?.message ||
-        err.message ||
-        "Unknown Gemini error";
-      errors.push(`${activeModel}: ${apiMsg}`);
-      console.error(
-        "Gemini request failed =>",
-        JSON.stringify({
-          model: activeModel,
-          status: status || null,
-          code: err.code || null,
-          apiMsg,
-          hasResponse: Boolean(err.response),
-        })
-      );
 
-      if (!err.response) {
-        const net = new Error(
-          `Cannot reach Google Gemini from this server (${err.code || apiMsg}). Hostinger outbound access to generativelanguage.googleapis.com may be blocked.`
-        );
-        net.code = "AI_NETWORK_ERROR";
-        throw net;
+        const normalized = buildAiError("gemini", status, apiMsg);
+        if (normalized.code === "AI_API_KEY_INVALID") {
+          authError = normalized;
+          throw authError;
+        }
+
+        const retryable =
+          status === 404 ||
+          status === 429 ||
+          status === 400 ||
+          status === 503 ||
+          status === 502;
+
+        if (status === 503 || status === 502) {
+          if (attempt === 0) continue; // retry same model once after delay
+          console.warn(
+            `Gemini model ${activeModel} still busy (${status}). Trying next model...`
+          );
+          break;
+        }
+
+        if (retryable) {
+          console.warn(
+            `Gemini model ${activeModel} failed (${status}): ${apiMsg}. Trying next model...`
+          );
+          break;
+        }
+
+        throw normalized;
       }
-
-      const normalized = buildAiError("gemini", status, apiMsg);
-      if (normalized.code === "AI_API_KEY_INVALID") {
-        authError = normalized;
-        // Same key fails for every model — stop immediately
-        throw authError;
-      }
-
-      // Try next model when deprecated/missing, rate-limited, overloaded, or bad request for that model
-      if (status === 404 || status === 429 || status === 400 || status === 503 || status === 502) {
-        console.warn(
-          `Gemini model ${activeModel} failed (${status}): ${apiMsg}. Trying next model...`
-        );
-        continue;
-      }
-
-      throw normalized;
     }
   }
 
   if (authError) throw authError;
 
-  if (errors.some((e) => /high demand|503|overloaded|try again later/i.test(e))) {
+  const has503 = errors.some((e) => /high demand|503|overloaded|try again later/i.test(e));
+  const has404 = errors.some((e) => /not found|404|no longer available/i.test(e));
+
+  if (has404 && has503) {
+    const err = new Error(
+      "Gemini models are busy or deprecated. In Super Admin → OCR & API Configuration set Model to gemini-3.1-flash-lite, Save, then try again in a minute."
+    );
+    err.code = "AI_MODEL_INVALID";
+    throw err;
+  }
+
+  if (has503) {
     throw buildAiError("gemini", 503, errors.join(" | "));
   }
 
-  const modelErr = buildAiError("gemini", 404, errors.join(" | "));
-  if (errors.some((e) => /not found|404/i.test(e))) {
-    throw modelErr;
+  if (has404) {
+    throw buildAiError("gemini", 404, errors.join(" | "));
   }
+
   throw new Error(
-    `All Gemini models failed. Update Model in OCR & API Configuration (recommended: gemini-3.5-flash).`
+    "All Gemini models failed. Set Model to gemini-3.1-flash-lite in OCR & API Configuration."
   );
 }
 
