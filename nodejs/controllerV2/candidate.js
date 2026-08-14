@@ -912,23 +912,40 @@ exports.candidateUpdate = async (req, res) => {
     agencyId,
     ...candidate
   } = req.body;
-  const existingCandidateEmail = await Candidates.findOne({
-    email: candidate.email,
-    id: { $ne: id },
-  });
-  if (existingCandidateEmail) {
-    return res.json({
-      error: "Your email is already in used",
-    });
+
+  if (Array.isArray(id)) id = id[id.length - 1];
+  id = String(id || "").trim();
+  if (!id) {
+    return res.json({ error: "Candidate id is required for update" });
   }
-  const existingCandidateMobile = await Candidates.findOne({
-    mobile: candidate.mobile,
-    id: { $ne: id },
-  });
-  if (existingCandidateMobile) {
-    return res.json({
-      error: "Your Mobile number is already in used",
+
+  const email = String(candidate.email || "").trim();
+  const mobile = String(candidate.mobile || "").trim();
+
+  // Empty email/mobile must not match other blank records.
+  if (email) {
+    const existingCandidateEmail = await Candidates.findOne({
+      email,
+      id: { $ne: id },
     });
+    if (existingCandidateEmail) {
+      // Keep this candidate's current email; still allow resume/profile update
+      delete candidate.email;
+    }
+  } else {
+    delete candidate.email;
+  }
+
+  if (mobile) {
+    const existingCandidateMobile = await Candidates.findOne({
+      mobile,
+      id: { $ne: id },
+    });
+    if (existingCandidateMobile) {
+      delete candidate.mobile;
+    }
+  } else {
+    delete candidate.mobile;
   }
 
   if (candidate?.interviewerId == "null") {
