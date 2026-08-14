@@ -503,24 +503,36 @@ exports.createCandidates = async (req, res) => {
     if (!data.mobile) {
       return res.status(400).json({ error: "Mobile number is required" });
     }
-    const existingCandidateEmail = data.email ? await Candidates.findOne({
-      email: data.email,
-    }) : null;
+    const pickExistingCandidate = (doc, matchOn) => {
+      if (!doc) return null;
+      const obj = typeof doc.toObject === "function" ? doc.toObject() : doc;
+      return {
+        id: String(obj.id || obj._id || ""),
+        firstname: obj.firstname || "",
+        lastname: obj.lastname || "",
+        mobile: obj.mobile || "",
+        email: obj.email || "",
+        matchOn,
+      };
+    };
+    const existingCandidateEmail = data.email
+      ? await Candidates.findOne({ email: data.email })
+      : null;
     if (existingCandidateEmail) {
       return res.json({
         error: "Your email is already in used",
         duplicate: true,
-        existingCandidate: existingCandidateEmail
+        existingCandidate: pickExistingCandidate(existingCandidateEmail, "email"),
       });
     }
-    const existingCandidateMobile = data.mobile ? await Candidates.findOne({
-      mobile: data.mobile,
-    }) : null;
+    const existingCandidateMobile = data.mobile
+      ? await Candidates.findOne({ mobile: data.mobile })
+      : null;
     if (existingCandidateMobile) {
       return res.json({
         error: "Your Mobile number is already in used",
         duplicate: true,
-        existingCandidate: existingCandidateMobile
+        existingCandidate: pickExistingCandidate(existingCandidateMobile, "mobile"),
       });
     }
     if (req?.files?.image) {
@@ -1637,23 +1649,35 @@ exports.candidateView = async (req, res) => {
 exports.checkCandidate = async (req, res) => {
   const { mobile, email } = req.body;
   try {
+    const pickExistingCandidate = (doc, matchOn) => {
+      if (!doc) return null;
+      const obj = typeof doc.toObject === "function" ? doc.toObject() : doc;
+      return {
+        id: String(obj.id || obj._id || ""),
+        firstname: obj.firstname || "",
+        lastname: obj.lastname || "",
+        mobile: obj.mobile || "",
+        email: obj.email || "",
+        matchOn,
+      };
+    };
     const mobileData = mobile ? await Candidates.findOne({ mobile: mobile }) : null;
     const emailData = email ? await Candidates.findOne({ email: email }) : null;
-    
+
     if (emailData) {
       return res.json({
         msg: "Already registered",
         duplicate: true,
-        existingCandidate: emailData,
-        error: "Your email is already in used"
+        existingCandidate: pickExistingCandidate(emailData, "email"),
+        error: "Your email is already in used",
       });
     }
     if (mobileData) {
       return res.json({
         msg: "Already registered",
         duplicate: true,
-        existingCandidate: mobileData,
-        error: "Your Mobile number is already in used"
+        existingCandidate: pickExistingCandidate(mobileData, "mobile"),
+        error: "Your Mobile number is already in used",
       });
     }
     return res.json({ msg: false, duplicate: false });
