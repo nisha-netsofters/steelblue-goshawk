@@ -46,6 +46,7 @@ const normalizeApi = (api, idx = 0) => {
     parameterMode: ["auto", "named", "positional"].includes(api.parameterMode)
       ? api.parameterMode
       : "auto",
+    audience: api.audience === "client" ? "client" : "candidate",
   };
 };
 

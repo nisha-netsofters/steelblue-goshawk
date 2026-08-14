@@ -17,6 +17,9 @@ const isApiEnabled = (api) => {
   return false;
 };
 
+const getApiAudience = (api) =>
+  api?.audience === "client" ? "client" : "candidate";
+
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const getMultiApiGapMs = () => {
@@ -384,6 +387,9 @@ const PLACEHOLDER_MAP = {
     ),
   "{{unfilled_fields_by_section}}": (c) =>
     exports.formatUnfilledFieldsBySection(c),
+  "{{companyName}}": (c) => pickStr(c?.companyName, c?.companyname),
+  "{{companyowner}}": (c) =>
+    pickStr(c?.companyowner, c?.companyOwner, c?.name),
 };
 
 const resolveByToken = (token, candidate) => {
@@ -1001,6 +1007,7 @@ exports.normalizeConfigDoc = (config) => {
         countryCodePrefix: api.countryCodePrefix || "91",
         recipientKey: api.recipientKey || "to",
         parameterMode: api.parameterMode || "auto",
+        audience: api.audience === "client" ? "client" : "candidate",
       })),
     };
   }
@@ -1069,6 +1076,17 @@ const sendSingleApi = async (api, candidate) => {
       candidate?.id
     );
 
+    // Read template identity from RAW config — never run placeholder resolution on these.
+    // Template can be named "unfilled_fields" which collides with {{unfilled_fields}} placeholder.
+    const getRawParam = (key) => {
+      const row = (api.bodyParams || []).find(
+        (p) => String(p?.key || "").trim() === key
+      );
+      return row?.value != null ? String(row.value).trim() : "";
+    };
+    const rawTemplateName = getRawParam("template.name");
+    const rawLangCode = getRawParam("template.language.code") || "en";
+
     let payload = buildPayloadFromParams(api.bodyParams, candidate);
     const recipientKey = api.recipientKey || "to";
     setNestedValue(payload, recipientKey, to);
@@ -1122,9 +1140,28 @@ const sendSingleApi = async (api, candidate) => {
       return { success: false, error: sanitized.error, ...apiMeta };
     }
 
-    let finalPayload = sanitized.payload;
+    const forceTemplateIdentity = (data) => {
+      if (!data || typeof data !== "object") return data;
+      const next = { ...data };
+      const tpl = { ...(next.template || {}) };
+      if (rawTemplateName) tpl.name = rawTemplateName;
+      tpl.language = {
+        ...(tpl.language || {}),
+        code: rawLangCode,
+      };
+      next.template = tpl;
+      return next;
+    };
+
+    let finalPayload = forceTemplateIdentity(sanitized.payload);
     let usedNamed = sanitized.useNamed;
 
+    console.info(
+      "Msg API final template.name =>",
+      finalPayload?.template?.name,
+      "| api:",
+      api.name
+    );
     console.info(
       "Msg API payload template.components =>",
       JSON.stringify(finalPayload?.template?.components || null)
@@ -1135,6 +1172,8 @@ const sendSingleApi = async (api, candidate) => {
     const agent = new https.Agent({ rejectUnauthorized: false });
 
     const doRequest = async (data) => {
+      // Always re-apply identity right before HTTP call (retries included)
+      const safeData = forceTemplateIdentity(data);
       const axiosConfig = {
         method,
         url: api.apiUrl,
@@ -1143,9 +1182,9 @@ const sendSingleApi = async (api, candidate) => {
         timeout: 45000,
       };
       if (method === "get") {
-        axiosConfig.params = data;
+        axiosConfig.params = safeData;
       } else {
-        axiosConfig.data = data;
+        axiosConfig.data = safeData;
       }
       return axios(axiosConfig);
     };
@@ -1421,7 +1460,9 @@ exports.sendWelcomeWhatsapp = async (candidateInput, options = {}) => {
 
   const config = await exports.getWelcomeWhatsappConfig();
   const apis = Array.isArray(config.apis) ? config.apis : [];
-  const enabledApis = apis.filter((a) => isApiEnabled(a));
+  const enabledApis = apis.filter(
+    (a) => isApiEnabled(a) && getApiAudience(a) !== "client"
+  );
 
   console.info(
     "Msg API enabled configs =>",
@@ -1471,3 +1512,76 @@ exports.sendWelcomeWhatsapp = async (candidateInput, options = {}) => {
 
   return { success: results.some((r) => r.success), results };
 };
+
+/**
+ * Client add → only Msg API configs with audience "client".
+ * Uses the same Super Admin /superadmin/msg cURL mapping (not hardcoded).
+ */
+exports.sendClientWelcomeWhatsapp = async (clientInput) => {
+  const client =
+    clientInput && typeof clientInput.toObject === "function"
+      ? clientInput.toObject()
+      : clientInput || {};
+
+  const person = {
+    id: client.id || client._id,
+    firstname: pickStr(client.companyowner, client.companyOwner, client.companyName),
+    lastname: "",
+    name: pickStr(client.companyowner, client.companyName),
+    mobile: pickStr(client.mobile, client.phone),
+    email: pickStr(client.email),
+    city: pickStr(client.city),
+    companyName: pickStr(client.companyName),
+    companyowner: pickStr(client.companyowner, client.companyOwner),
+    agencyId: client.agencyId,
+  };
+
+  const config = await exports.getWelcomeWhatsappConfig();
+  const apis = Array.isArray(config.apis) ? config.apis : [];
+  const enabledApis = apis.filter(
+    (a) => isApiEnabled(a) && getApiAudience(a) === "client"
+  );
+
+  console.info(
+    "Client Msg API enabled configs =>",
+    enabledApis.length,
+    "/",
+    apis.length,
+    enabledApis.map((a) => a.name || a.id).join(", ") || "(none)",
+    "| mobile:",
+    person.mobile || "(empty)"
+  );
+
+  if (enabledApis.length === 0) {
+    await logMessage({
+      candidateId: person.id,
+      mobile: person.mobile,
+      status: "skipped",
+      error: "No enabled Client Msg API — set Send to = Client (customer) and enable",
+    });
+    return { skipped: true, reason: "no_enabled_client_apis" };
+  }
+
+  const gapMs = getMultiApiGapMs();
+  const results = [];
+  for (let i = 0; i < enabledApis.length; i += 1) {
+    const api = enabledApis[i];
+    if (i > 0 && gapMs > 0) {
+      await delay(gapMs);
+    }
+    try {
+      const result = await sendSingleApi(api, person);
+      results.push(result);
+    } catch (err) {
+      results.push({
+        success: false,
+        error: err?.message || "Unknown error",
+        apiId: api?.id,
+        apiName: api?.name,
+      });
+    }
+  }
+
+  return { success: results.some((r) => r.success), results };
+};
+

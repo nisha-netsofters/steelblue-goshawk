@@ -22,6 +22,9 @@ const JobCategory = require("../models-v2/jobCategory_Mongoose");
 const Users = require("../models-v2/users_Mongoose");
 const bcrypt = require("bcryptjs");
 const { enqueueEmailJob } = require("../mq/emailProducer");
+const {
+  sendClientJoinWhatsapp,
+} = require("../middleware/whatsappMSG/clientJoinWhatsapp");
 
 exports.getClients = async (req, res) => {
   try {
@@ -161,6 +164,26 @@ exports.createClients = async (req, res) => {
     }
     let objectid = new mongoose.Types.ObjectId();
     let { industries_relation, jobCategory_relation, ...clients } = req.body;
+    if (typeof industries_relation === "string") {
+      try {
+        industries_relation = JSON.parse(industries_relation);
+      } catch (_) {
+        industries_relation = [];
+      }
+    }
+    if (typeof jobCategory_relation === "string") {
+      try {
+        jobCategory_relation = JSON.parse(jobCategory_relation);
+      } catch (_) {
+        jobCategory_relation = [];
+      }
+    }
+    industries_relation = Array.isArray(industries_relation)
+      ? industries_relation
+      : [];
+    jobCategory_relation = Array.isArray(jobCategory_relation)
+      ? jobCategory_relation
+      : [];
     let jobCategoriesarr = [];
     if (jobCategory_relation.length > 0) {
       for (let a = 0; a < jobCategory_relation.length; a++) {
@@ -226,10 +249,27 @@ exports.createClients = async (req, res) => {
       client: data,
       emailTo: agencyEmail?.email,
     });
+
+    // Client add → WhatsApp template welcome_msg2 (body_1 fixed text)
+    try {
+      sendClientJoinWhatsapp(data).catch((err) => {
+        console.info("sendClientJoinWhatsapp error =>", err?.message || err);
+      });
+    } catch (msgErr) {
+      console.info(
+        "sendClientJoinWhatsapp trigger error =>",
+        msgErr?.message || msgErr
+      );
+    }
+
     res.json(data);
   } catch (err) {
     console.log("dataa clients create errr", err);
-    res.json({ columns: err?.columns, constraint: err?.constraint });
+    return res.status(500).json({
+      error: err?.message || "Failed to create client",
+      columns: err?.columns,
+      constraint: err?.constraint,
+    });
   }
 };
 
