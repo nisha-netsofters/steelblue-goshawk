@@ -32,15 +32,118 @@ async function extractTextFromDocx(buffer) {
 }
 
 /**
+ * Legacy .doc is often RTF saved with a .doc extension — detect by magic bytes.
+ */
+function isRtfBuffer(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 5) return false;
+  // Compare bytes — avoid /\r/ in regex (carriage return)
+  return (
+    buffer[0] === 0x7b &&
+    buffer[1] === 0x5c &&
+    buffer[2] === 0x72 &&
+    buffer[3] === 0x74 &&
+    buffer[4] === 0x66
+  ); // {\rtf
+}
+
+function removeRtfGroupContaining(rtf, keyword) {
+  let result = rtf;
+  let searchFrom = 0;
+  while (true) {
+    const pos = result.toLowerCase().indexOf(`\\${keyword.toLowerCase()}`, searchFrom);
+    if (pos === -1) break;
+    let start = pos;
+    while (start > 0 && result[start] !== "{") start--;
+    if (result[start] !== "{") {
+      searchFrom = pos + keyword.length + 1;
+      continue;
+    }
+    let depth = 0;
+    let end = start;
+    for (; end < result.length; end++) {
+      if (result[end] === "{") depth++;
+      else if (result[end] === "}") {
+        depth--;
+        if (depth === 0) {
+          end++;
+          break;
+        }
+      }
+    }
+    result = result.slice(0, start) + result.slice(end);
+    searchFrom = start;
+  }
+  return result;
+}
+
+/**
+ * Extracts plain text from RTF (Rich Text Format), including files named .doc.
+ */
+function extractTextFromRtf(buffer) {
+  try {
+    let rtf = buffer.toString("latin1");
+    const headerGroups = [
+      "fonttbl",
+      "colortbl",
+      "stylesheet",
+      "filetbl",
+      "listtable",
+      "listoverridetable",
+      "revtbl",
+      "generator",
+      "info",
+      "pict",
+      "object",
+      "header",
+      "footer",
+      "footnote",
+      "xmlnstbl",
+      "themedata",
+      "datastore",
+    ];
+    for (const keyword of headerGroups) {
+      rtf = removeRtfGroupContaining(rtf, keyword);
+    }
+    rtf = rtf.replace(/\\par[d]?\s?/gi, "\n");
+    rtf = rtf.replace(/\\line\s?/gi, "\n");
+    rtf = rtf.replace(/\\tab\s?/gi, "\t");
+    rtf = rtf.replace(/\\'([0-9a-f]{2})/gi, (_, hex) =>
+      String.fromCharCode(parseInt(hex, 16))
+    );
+    rtf = rtf.replace(/\\u(-?\d+)\??\s?/g, (_, num) => {
+      const code = parseInt(num, 10);
+      return String.fromCharCode(code < 0 ? code + 65536 : code);
+    });
+    rtf = rtf.replace(/\\\*?[a-z]+-?\d*\s?/gi, "");
+    rtf = rtf.replace(/[{}]/g, "");
+    return rtf
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .replace(/  +/g, " ")
+      .trim();
+  } catch (error) {
+    console.error("RTF parse error, falling back to empty text:", error);
+    return "";
+  }
+}
+
+/**
  * Extracts raw text from a legacy DOC buffer.
  */
 async function extractTextFromDoc(buffer) {
+  if (isRtfBuffer(buffer)) {
+    console.log("DOC file is RTF format — using RTF extractor");
+    return extractTextFromRtf(buffer);
+  }
   try {
     const extractor = new WordExtractor();
     const extracted = await extractor.extract(buffer);
     return (extracted && extracted.getBody && extracted.getBody()) || "";
   } catch (error) {
     console.error("DOC parse error, falling back to empty text:", error);
+    if (isRtfBuffer(buffer)) {
+      return extractTextFromRtf(buffer);
+    }
     return "";
   }
 }
@@ -800,9 +903,14 @@ async function parseResumeData(fileData, extractionSource = "application/pdf", f
       mime.includes("wordprocessingml") ||
       mime.includes("docx") ||
       name.endsWith(".docx");
+    const isRtf =
+      mime.includes("rtf") ||
+      name.endsWith(".rtf") ||
+      (Buffer.isBuffer(fileData) && isRtfBuffer(fileData));
     // Legacy .doc (also when browser sends empty/octet-stream mime)
     const isDoc =
       !isDocx &&
+      !isRtf &&
       (mime.includes("msword") ||
         mime === "application/msword" ||
         name.endsWith(".doc"));
@@ -819,6 +927,10 @@ async function parseResumeData(fileData, extractionSource = "application/pdf", f
       console.log("Extracting text from DOCX buffer...");
       textStr = await extractTextFromDocx(fileData);
       sourceLabel = "DOCX Extraction";
+    } else if (isRtf) {
+      console.log("Extracting text from RTF buffer...");
+      textStr = extractTextFromRtf(fileData);
+      sourceLabel = "RTF Extraction";
     } else if (isDoc) {
       console.log("Extracting text from DOC buffer...");
       textStr = await extractTextFromDoc(fileData);
