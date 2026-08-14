@@ -222,6 +222,7 @@ async function runTesseractOcr(imageBuffer, credentials) {
 
 /**
  * Perform OCR based on the active provider.
+ * Falls back to built-in Tesseract when a cloud OCR key is invalid or unreachable.
  */
 async function extractTextWithOcr(imageBuffer) {
   const ocrConfig = await getActiveOcrProvider();
@@ -233,14 +234,42 @@ async function extractTextWithOcr(imageBuffer) {
   const { provider, credentials } = ocrConfig;
   console.log(`Running OCR using provider: ${provider}`);
 
-  switch (provider) {
-    case "google_vision":
-      return await runGoogleVisionOcr(imageBuffer, credentials);
-    case "azure_document_intelligence":
-      return await runAzureOcr(imageBuffer, credentials);
-    case "tesseract":
-    default:
-      return await runTesseractOcr(imageBuffer, credentials);
+  const fallbackToTesseract = async (reason) => {
+    console.warn(`${provider} OCR failed (${reason}) — falling back to Tesseract.`);
+    return runTesseractOcr(imageBuffer, { language: "eng" });
+  };
+
+  try {
+    switch (provider) {
+      case "google_vision":
+        return await runGoogleVisionOcr(imageBuffer, credentials);
+      case "azure_document_intelligence":
+        return await runAzureOcr(imageBuffer, credentials);
+      case "tesseract":
+      default:
+        return await runTesseractOcr(imageBuffer, credentials);
+    }
+  } catch (err) {
+    const status = err.response?.status;
+    const isAuthFailure = status === 401 || status === 403;
+    const isUnreachable = !err.response && Boolean(err.code);
+
+    if (provider === "google_vision" || provider === "azure_document_intelligence") {
+      if (isAuthFailure || isUnreachable) {
+        const text = await fallbackToTesseract(status || err.code || err.message);
+        if (text && text.trim()) return text;
+      }
+    }
+
+    if (isAuthFailure) {
+      const authErr = new Error(
+        "Invalid OCR API key for image resume upload. Update Google Vision in Super Admin → OCR & API Configuration, or switch to Tesseract OCR."
+      );
+      authErr.code = "OCR_API_KEY_INVALID";
+      throw authErr;
+    }
+
+    throw err;
   }
 }
 
