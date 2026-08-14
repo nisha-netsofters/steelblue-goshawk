@@ -26,7 +26,7 @@ const apiConfigSchema = new Schema(
     bodyParams: { type: [keyValueSchema], default: [] },
     countryCodePrefix: { type: String, default: "91" },
     recipientKey: { type: String, default: "to" },
-    // candidate = resume create; client = new client add (customer WhatsApp)
+    // candidate | client — customer templates use candidate trigger on create
     audience: { type: String, default: "candidate" },
     // auto | named | positional — fixes WhatsApp #132012 when template is positional
     parameterMode: { type: String, default: "auto" },

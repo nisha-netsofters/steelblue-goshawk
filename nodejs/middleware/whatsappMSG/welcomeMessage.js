@@ -17,6 +17,23 @@ const isApiEnabled = (api) => {
   return false;
 };
 
+const getApiAudience = (api) => {
+  if (api?.id === "msg-client-welcome") return "client";
+  if (
+    api?.id === "msg-customer-welcome" ||
+    api?.id === "msg-customer-unfilled"
+  ) {
+    return "candidate";
+  }
+  if (api?.id === "msg-welcome-both") return "candidate";
+  if (api?.id === "msg-candidate-welcome") return "candidate";
+  if (api?.audience === "client") return "client";
+  return "candidate";
+};
+
+const apiMatchesTrigger = (api, trigger) =>
+  getApiAudience(api) === trigger;
+
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const getMultiApiGapMs = () => {
@@ -981,10 +998,102 @@ const legacyToApi = (plain) => {
   };
 };
 
+const MSG_CONFIG_SLOTS_BACKEND = [
+  {
+    id: "msg-client-welcome",
+    audience: "client",
+    name: "Client Welcome",
+  },
+  {
+    id: "msg-customer-welcome",
+    audience: "candidate",
+    name: "Customer Welcome",
+  },
+  {
+    id: "msg-customer-unfilled",
+    audience: "candidate",
+    name: "Customer Unfilled Fields",
+  },
+];
+
+const remapLegacySavedApi = (api) => {
+  if (!api) return api;
+  const next = { ...api };
+  if (next.id === "msg-welcome-both" || next.audience === "both") {
+    next.id = "msg-customer-welcome";
+    next.audience = "candidate";
+  }
+  if (next.id === "msg-candidate-welcome") {
+    next.id = "msg-customer-welcome";
+  }
+  return next;
+};
+
+const mapApiRow = (api, slot) => ({
+  id: slot?.id || api.id || newApiId(),
+  name: api.name || slot?.name || "API Config",
+  isEnabled: isApiEnabled(api),
+  apiUrl: api.apiUrl || "",
+  method: api.method || "POST",
+  curlText: api.curlText || "",
+  headers: Array.isArray(api.headers) ? api.headers : [],
+  bodyParams: Array.isArray(api.bodyParams) ? api.bodyParams : [],
+  countryCodePrefix: api.countryCodePrefix || "91",
+  recipientKey: api.recipientKey || "to",
+  parameterMode: api.parameterMode || "auto",
+  audience: slot?.audience || getApiAudience(api),
+});
+
+const emptySlotApi = (slot) =>
+  mapApiRow(
+    {
+      id: slot.id,
+      name: slot.name,
+      isEnabled: false,
+      apiUrl: "",
+      bodyParams: [],
+      headers: [],
+    },
+    slot
+  );
+
+const normalizeApisToSlots = (saved) => {
+  const list = Array.isArray(saved)
+    ? saved.map(remapLegacySavedApi)
+    : [];
+  const usedIndexes = new Set();
+  const pickUnused = () => {
+    const idx = list.findIndex((_, i) => !usedIndexes.has(i));
+    if (idx < 0) return null;
+    usedIndexes.add(idx);
+    return list[idx];
+  };
+
+  return MSG_CONFIG_SLOTS_BACKEND.map((slot) => {
+    let matchIdx = list.findIndex(
+      (a, i) => !usedIndexes.has(i) && a.id === slot.id
+    );
+    if (matchIdx >= 0) {
+      usedIndexes.add(matchIdx);
+      return mapApiRow(list[matchIdx], slot);
+    }
+    matchIdx = list.findIndex(
+      (a, i) => !usedIndexes.has(i) && a.audience === slot.audience
+    );
+    if (matchIdx >= 0) {
+      usedIndexes.add(matchIdx);
+      return mapApiRow(list[matchIdx], slot);
+    }
+    const match = pickUnused();
+    if (match) return mapApiRow(match, slot);
+    return emptySlotApi(slot);
+  });
+};
+
 /** Normalize stored doc → { apis: [...] } with legacy migration */
 exports.normalizeConfigDoc = (config) => {
   if (!config) {
-    return { id: CONFIG_ID, apis: [] };
+    return { id: CONFIG_ID, apis: normalizeApisToSlots([]) };
   }
   const plain =
     typeof config.toObject === "function" ? config.toObject() : { ...config };
@@ -992,28 +1101,19 @@ exports.normalizeConfigDoc = (config) => {
   if (Array.isArray(plain.apis) && plain.apis.length > 0) {
     return {
       id: plain.id || CONFIG_ID,
-      apis: plain.apis.map((api, idx) => ({
-        id: api.id || newApiId(),
-        name: api.name || `API Config ${idx + 1}`,
-        isEnabled: isApiEnabled(api),
-        apiUrl: api.apiUrl || "",
-        method: api.method || "POST",
-        curlText: api.curlText || "",
-        headers: Array.isArray(api.headers) ? api.headers : [],
-        bodyParams: Array.isArray(api.bodyParams) ? api.bodyParams : [],
-        countryCodePrefix: api.countryCodePrefix || "91",
-        recipientKey: api.recipientKey || "to",
-        parameterMode: api.parameterMode || "auto",
-      })),
+      apis: normalizeApisToSlots(plain.apis),
     };
   }
 
   // Migrate legacy single config if it has useful data
   if (plain.apiUrl || plain.securityKey || (plain.bodyParams || []).length) {
-    return { id: plain.id || CONFIG_ID, apis: [legacyToApi(plain)] };
+    return {
+      id: plain.id || CONFIG_ID,
+      apis: normalizeApisToSlots([legacyToApi(plain)]),
+    };
   }
 
-  return { id: plain.id || CONFIG_ID, apis: [] };
+  return { id: plain.id || CONFIG_ID, apis: normalizeApisToSlots([]) };
 };
 
 exports.getWelcomeWhatsappConfig = async () => {
@@ -1456,7 +1556,9 @@ exports.sendWelcomeWhatsapp = async (candidateInput, options = {}) => {
 
   const config = await exports.getWelcomeWhatsappConfig();
   const apis = Array.isArray(config.apis) ? config.apis : [];
-  const enabledApis = apis.filter((a) => isApiEnabled(a));
+  const enabledApis = apis.filter(
+    (a) => isApiEnabled(a) && apiMatchesTrigger(a, "candidate")
+  );
 
   console.info(
     "Msg API enabled configs =>",
@@ -1531,7 +1633,9 @@ exports.sendClientWelcomeWhatsapp = async (clientInput) => {
 
   const config = await exports.getWelcomeWhatsappConfig();
   const apis = Array.isArray(config.apis) ? config.apis : [];
-  const enabledApis = apis.filter((a) => isApiEnabled(a));
+  const enabledApis = apis.filter(
+    (a) => isApiEnabled(a) && apiMatchesTrigger(a, "client")
+  );
 
   console.info(
     "Client Msg API enabled configs =>",

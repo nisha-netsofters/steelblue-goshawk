@@ -46,6 +46,12 @@ const normalizeApi = (api, idx = 0) => {
     parameterMode: ["auto", "named", "positional"].includes(api.parameterMode)
       ? api.parameterMode
       : "auto",
+    audience: (() => {
+      if (api.id === "msg-client-welcome" || api.audience === "client") {
+        return "client";
+      }
+      return "candidate";
+    })(),
   };
 };
 
@@ -100,6 +106,7 @@ exports.saveConfig = async (req, res) => {
     const normalizedApis = apis.map((api, idx) => normalizeApi(api, idx));
 
     for (const api of normalizedApis) {
+      if (!api.isEnabled) continue;
       if (!api.apiUrl) {
         return res.status(400).json({
           error: `"${api.name}" — API URL is required`,
