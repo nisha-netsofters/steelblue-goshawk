@@ -424,6 +424,19 @@ function buildAiError(provider, status, apiMsg = "") {
     return err;
   }
 
+  if (
+    status === 503 ||
+    status === 502 ||
+    msg.includes("high demand") ||
+    msg.includes("try again later") ||
+    msg.includes("overloaded")
+  ) {
+    err.code = "AI_SERVICE_BUSY";
+    err.message =
+      "Gemini is temporarily busy (high demand). Please wait a few seconds and try again.";
+    return err;
+  }
+
   if (status === 404 || msg.includes("not found") || msg.includes("is not found")) {
     err.code = "AI_MODEL_INVALID";
     err.message =
@@ -506,8 +519,8 @@ async function queryGemini(text, credentials) {
         throw authError;
       }
 
-      // Try next model when deprecated/missing (404) or rate-limited (429) or bad request for that model
-      if (status === 404 || status === 429 || status === 400) {
+      // Try next model when deprecated/missing, rate-limited, overloaded, or bad request for that model
+      if (status === 404 || status === 429 || status === 400 || status === 503 || status === 502) {
         console.warn(
           `Gemini model ${activeModel} failed (${status}): ${apiMsg}. Trying next model...`
         );
@@ -519,6 +532,10 @@ async function queryGemini(text, credentials) {
   }
 
   if (authError) throw authError;
+
+  if (errors.some((e) => /high demand|503|overloaded|try again later/i.test(e))) {
+    throw buildAiError("gemini", 503, errors.join(" | "));
+  }
 
   const modelErr = buildAiError("gemini", 404, errors.join(" | "));
   if (errors.some((e) => /not found|404/i.test(e))) {
