@@ -13,6 +13,238 @@ const {
   VALID_ACTIONS,
 } = require("../services/jobDescriptionGenerator");
 
+let buildProfileCompletenessAddFieldsStages = () => [];
+try {
+  ({ buildProfileCompletenessAddFieldsStages } =
+    require("../services/profileCompleteness"));
+} catch (e) {
+  console.error("profileCompleteness load failed:", e?.message || e);
+}
+
+const MATCH_SCORE_MAX_POINTS = 70;
+
+const getMatchScoreMatchFilter = (filterValue) => {
+  if (!filterValue && filterValue !== 0) return null;
+  const normalized = String(filterValue).trim().toLowerCase();
+  if (
+    normalized === "100" ||
+    normalized === "100%" ||
+    normalized === "complete"
+  ) {
+    return { matchScore: 100 };
+  }
+  if (
+    normalized === "above80" ||
+    normalized === "above_80" ||
+    normalized === ">80" ||
+    normalized === "above 80%"
+  ) {
+    return { matchScore: { $gt: 80 } };
+  }
+  if (
+    normalized === "above90" ||
+    normalized === "above_90" ||
+    normalized === ">90" ||
+    normalized === "above 90%"
+  ) {
+    return { matchScore: { $gt: 90 } };
+  }
+  if (
+    normalized === "above70" ||
+    normalized === "above_70" ||
+    normalized === ">70" ||
+    normalized === "above 70%"
+  ) {
+    return { matchScore: { $gt: 70 } };
+  }
+  if (
+    normalized === "above60" ||
+    normalized === "above_60" ||
+    normalized === ">60" ||
+    normalized === "above 60%"
+  ) {
+    return { matchScore: { $gt: 60 } };
+  }
+  if (
+    normalized === "below50" ||
+    normalized === "below_50" ||
+    normalized === "<50" ||
+    normalized === "below 50%"
+  ) {
+    return { matchScore: { $lt: 50 } };
+  }
+  if (
+    normalized === "below30" ||
+    normalized === "below_30" ||
+    normalized === "<30" ||
+    normalized === "below 30%"
+  ) {
+    return { matchScore: { $lt: 30 } };
+  }
+  return null;
+};
+
+const getMatchScoreMatchStage = (filterValue) => {
+  const match = getMatchScoreMatchFilter(filterValue);
+  return match ? { $match: match } : null;
+};
+
+const buildBestMatchBaseFilter = (jobOpening) => {
+  const filter = {};
+  if (jobOpening?.jobCategoryId) {
+    filter["professional.jobCategoryId"] = jobOpening.jobCategoryId;
+  }
+  if (jobOpening?.gender && jobOpening.gender !== "both") {
+    filter.gender = new RegExp(`^${String(jobOpening.gender).trim()}$`, "i");
+  }
+  if (jobOpening?.createdAt) {
+    filter.createdAt = { $lt: new Date(jobOpening.createdAt) };
+  }
+  return filter;
+};
+
+const buildAgencyMergeFilter = (agencydiv, agencyId, uniqueworld) => {
+  if (agencydiv?.permission?.dataMerge?.allAgency === true) {
+    return {
+      $or: [
+        { "agency.permission.dataMerge.allAgency": true },
+        { "agency.id": agencydiv.id },
+      ],
+    };
+  }
+  if (
+    agencydiv?.permission?.dataMerge?.uniqueworld === true &&
+    agencydiv?.permission?.dataMerge?.allAgency === false
+  ) {
+    return {
+      $or: [{ "agency.id": agencyId }, { "agency.id": uniqueworld?.id }],
+    };
+  }
+  if (
+    agencydiv?.permission?.dataMerge?.allAgency === false &&
+    agencydiv?.permission?.dataMerge?.uniqueworld === false
+  ) {
+    return { "agency.id": agencyId };
+  }
+  return {};
+};
+
+const buildCandidateMatchScoreAddFields = (jobOpening) => {
+  const jobCategoryId = jobOpening?.jobCategoryId;
+  const minExp = jobOpening?.minExperienceYears;
+  const salaryStart = jobOpening?.salaryRangeStart;
+  const salaryEnd = jobOpening?.salaryRangeEnd;
+  const jobLocation = jobOpening?.jobLocation || "";
+  const workType = jobOpening?.workType || "";
+
+  const rawScore = {
+    $add: [
+      {
+        $cond: [
+          { $eq: ["$professional.jobCategoryId", jobCategoryId] },
+          30,
+          0,
+        ],
+      },
+      {
+        $cond: [
+          {
+            $and: [
+              { $ne: [salaryStart, null] },
+              { $ne: [salaryEnd, null] },
+              { $gte: ["$professional.expectedsalary", salaryStart] },
+              { $lte: ["$professional.expectedsalary", salaryEnd] },
+            ],
+          },
+          20,
+          0,
+        ],
+      },
+      {
+        $cond: [
+          {
+            $and: [
+              { $ne: [minExp, null] },
+              { $ne: [minExp, undefined] },
+              {
+                $eq: [
+                  {
+                    $convert: {
+                      input: { $ifNull: ["$professional.experienceInyear", ""] },
+                      to: "string",
+                      onError: "",
+                      onNull: "",
+                    },
+                  },
+                  { $toString: minExp },
+                ],
+              },
+            ],
+          },
+          10,
+          0,
+        ],
+      },
+      {
+        $cond: [
+          {
+            $or: [
+              { $eq: [jobLocation, null] },
+              { $eq: [jobLocation, ""] },
+              {
+                $regexMatch: {
+                  input: { $ifNull: ["$city", ""] },
+                  regex: jobLocation,
+                  options: "i",
+                },
+              },
+            ],
+          },
+          5,
+          0,
+        ],
+      },
+      {
+        $cond: [
+          {
+            $or: [
+              { $eq: [workType, null] },
+              { $eq: [workType, ""] },
+              { $eq: ["$professional.workType", workType] },
+            ],
+          },
+          5,
+          0,
+        ],
+      },
+    ],
+  };
+
+  return {
+    matchScore: {
+      $round: [
+        {
+          $multiply: [
+            { $divide: [rawScore, MATCH_SCORE_MAX_POINTS] },
+            100,
+          ],
+        },
+        0,
+      ],
+    },
+  };
+};
+
+const buildBestMatchSortStage = (sortBy) => {
+  if (sortBy === "newToOld") {
+    return { $sort: { createdAt: -1 } };
+  }
+  if (sortBy === "oldToNew") {
+    return { $sort: { createdAt: 1 } };
+  }
+  return { $sort: { matchScore: -1, createdAt: -1 } };
+};
+
 /** Roles allowed to manage job openings (Admin / Staff / Client). */
 const JOB_POSTING_ROLES = [
   "Admin",
@@ -534,83 +766,40 @@ exports.deleteJobOpening = async (req, res) => {
 exports.bestMatchCandidate = async (req, res) => {
   try {
     const jobOpeningid = req.params.id;
-    let { page, perPage } = req.query;
+    let page = Number(req.query.page) || 1;
+    let perPage = Number(req.query.perPage) || 10;
     page -= 1;
-    const jobOpening = await JobOpening.findOne({ id: jobOpeningid });
-    const agencyId = req.headers["agencyid"];
+    const sortBy = req.query.sortBy || "bestMatch";
+    const matchScoreFilter = req.query.matchScore || "";
 
+    const jobOpening = await JobOpening.findOne({ id: jobOpeningid });
+    if (!jobOpening) {
+      return res.status(404).json({ msg: "Job opening not found" });
+    }
+
+    const agencyId = req.headers["agencyid"];
     const agencydiv = await Agency.findOne({ id: agencyId });
     const uniqueworld = await Agency.findOne({
       email: "uniqueworldjobs@gmail.com",
     });
-    let filterforagency = {};
-    if (
-      agencydiv?.permission?.dataMerge?.allAgency == true
-    ) {
-      filterforagency = {
-        ...filterforagency,
-        $or: [
-          { "agency.permission.dataMerge.allAgency": true },
-          { "agency.id": agencydiv.id },
-        ],
-      };
-    } else if (
-      agencydiv?.permission?.dataMerge?.uniqueworld == true &&
-      agencydiv?.permission?.dataMerge?.allAgency == false
-    ) {
-      filterforagency = {
-        ...filterforagency,
-        $or: [{ "agency.id": agencyId }, { "agency.id": uniqueworld.id }],
-      };
-    } else if (
-      agencydiv?.permission?.dataMerge?.allAgency == false &&
-      agencydiv?.permission?.dataMerge?.allAgency == false
-    ) {
-      filterforagency = {
-        ...filterforagency,
-        "agency.id": agencyId,
-      };
-    }
-    let filter = {};
-    if (jobOpening) {
-      filter = {
-        ...filter,
-        "professional.jobCategoryId": jobOpening?.jobCategoryId,
-      };
-      filter = {
-        ...filter,
-        "professional.experienceInyear": jobOpening?.minExperienceYears,
-      };
-      filter = {
-        ...filter,
-        "professional.expectedsalary": {
-          $gte: jobOpening?.salaryRangeStart,
-          $lte: jobOpening?.salaryRangeEnd,
-        },
-      };
-    }
-    if (jobOpening?.gender !== "both") {
-      filter = {
-        ...filter,
-        gender: jobOpening?.gender,
-      };
-    }
+    const filterforagency = buildAgencyMergeFilter(
+      agencydiv,
+      agencyId,
+      uniqueworld
+    );
+    const filter = buildBestMatchBaseFilter(jobOpening);
+    const matchScoreStage = getMatchScoreMatchStage(matchScoreFilter);
+    const profileStages = buildProfileCompletenessAddFieldsStages();
 
-    const bestMatchCandidates = await Candidates.aggregate([
-      {
-        $match: { ...filter },
-      },
+    const pipeline = [
+      { $match: filter },
       {
         $lookup: {
           from: "agency",
           localField: "agencyId",
           foreignField: "id",
           as: "agency",
-          pipeline: [
-            {
-              $project: { password: 0 },
-            },
-          ],
+          pipeline: [{ $project: { password: 0 } }],
         },
       },
       {
@@ -618,17 +807,16 @@ exports.bestMatchCandidate = async (req, res) => {
           agency: { $arrayElemAt: ["$agency", 0] },
         },
       },
+      ...(Object.keys(filterforagency).length
+        ? [{ $match: filterforagency }]
+        : []),
       {
         $lookup: {
           from: "interviewRequest",
           localField: "id",
           foreignField: "candidateId",
           as: "interviewRequest",
-          pipeline: [
-            {
-              $sort: { createdAt: 1 },
-            },
-          ],
+          pipeline: [{ $sort: { createdAt: 1 } }],
         },
       },
       {
@@ -643,9 +831,7 @@ exports.bestMatchCandidate = async (req, res) => {
                   {
                     days: {
                       $divide: [
-                        {
-                          $subtract: [new Date(), "$$request.createdAt"],
-                        },
+                        { $subtract: [new Date(), "$$request.createdAt"] },
                         1000 * 3600 * 24,
                       ],
                     },
@@ -669,7 +855,7 @@ exports.bestMatchCandidate = async (req, res) => {
                     isdisabled: {
                       $lte: [
                         "$$request.days",
-                        process.env.INTERVIEW_REQUEST_DURATION,
+                        Number(process.env.INTERVIEW_REQUEST_DURATION) || 7,
                       ],
                     },
                   },
@@ -684,35 +870,31 @@ exports.bestMatchCandidate = async (req, res) => {
           interview_request: { $arrayElemAt: ["$interviewRequest", 0] },
         },
       },
-      {
-        $project: { interviewRequest: 0 },
-      },
+      { $project: { interviewRequest: 0 } },
+      { $addFields: buildCandidateMatchScoreAddFields(jobOpening) },
+      ...profileStages,
+      ...(matchScoreStage ? [matchScoreStage] : []),
+      buildBestMatchSortStage(sortBy),
       {
         $facet: {
-          data: [
-            {
-              $skip: page * perPage,
-            },
-            {
-              $limit: Number(perPage),
-            },
-          ],
+          data: [{ $skip: page * perPage }, { $limit: perPage }],
           count: [{ $group: { _id: null, count: { $sum: 1 } } }],
         },
       },
-    ]);
+    ];
+
+    const bestMatchCandidates = await Candidates.aggregate(pipeline);
     const result = {
-      data: bestMatchCandidates[0].data,
-      count: bestMatchCandidates[0].count[0]
-        ? bestMatchCandidates[0].count[0].count
-        : 0,
+      data: bestMatchCandidates[0]?.data || [],
+      count: bestMatchCandidates[0]?.count?.[0]?.count || 0,
     };
     res.json({
       results: result.data,
       total: result.count,
     });
   } catch (error) {
-    res.status(200).json({
+    console.error("bestMatchCandidate error:", error);
+    res.status(500).json({
       msg: "Internal error",
     });
   }
