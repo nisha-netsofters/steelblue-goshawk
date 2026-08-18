@@ -2,26 +2,46 @@ const { default: mongoose } = require("mongoose");
 const JobCategory = require("../models-v2/jobCategory_Mongoose");
 
 exports.createJobCategory = async (req, res) => {
-  const data = req.body;
+  const data = req.body || {};
+  const jobCategoryName = String(
+    data.jobCategory || data.name || data.category || ""
+  ).trim();
+  if (!jobCategoryName) {
+    return res.json({ error: "Category name is required" });
+  }
   const objectid = new mongoose.Types.ObjectId();
   try {
     const jobCategory = await JobCategory.create({
       id: objectid,
       _id: objectid,
-      ...data,
+      jobCategory: jobCategoryName,
+      comments: data.comments || "",
     });
     res.json(jobCategory);
   } catch (error) {
-    console.log("jobCategory create", err);
+    console.log("jobCategory create", error);
+    res.json({ error: "jobCategory create failed" });
   }
 };
 
 exports.updateJobCategory = async (req, res) => {
   const id = req.params.id;
-  const data = req.body;
-  await JobCategory.updateOne({ id }, { $set: data })
+  const data = req.body || {};
+  const jobCategoryName = String(
+    data.jobCategory || data.name || data.category || ""
+  ).trim();
+  if (!jobCategoryName) {
+    return res.json({ error: "Category name is required" });
+  }
+  await JobCategory.updateOne(
+    { id },
+    { $set: { jobCategory: jobCategoryName, updatedAt: new Date() } }
+  )
     .then(() => res.json({ msg: "success" }))
-    .catch((err) => console.log("jobCategory update", err));
+    .catch((err) => {
+      console.log("jobCategory update", err);
+      res.json({ error: "jobCategory update failed" });
+    });
 };
 
 exports.getjobCategories = async (req, res) => {

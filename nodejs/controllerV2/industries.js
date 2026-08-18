@@ -1,24 +1,47 @@
+const { default: mongoose } = require("mongoose");
 const Industries = require("../models-v2/industries_Mongoose");
 
 exports.createIndustries = async (req, res) => {
-  const data = req.body;
+  const data = req.body || {};
+  const industryName = String(
+    data.industryCategory || data.name || data.category || ""
+  ).trim();
+  if (!industryName) {
+    return res.json({ error: "Industry name is required" });
+  }
+  const objectid = new mongoose.Types.ObjectId();
   try {
-    const industries = await Industries.create(data);
-    industries.id = industries._id;
-    industries.save();
+    const industries = await Industries.create({
+      id: objectid,
+      _id: objectid,
+      industryCategory: industryName,
+      comments: data.comments || "",
+    });
     res.json(industries);
   } catch (error) {
-    console.log("industries create", err);
+    console.log("industries create", error);
+    res.json({ error: "industries create failed" });
   }
 };
 
 exports.updateIndustries = async (req, res) => {
   const id = req.params.id;
-  const data = req.body;
-  await Industries.updateOne({ id }, data)
-
+  const data = req.body || {};
+  const industryName = String(
+    data.industryCategory || data.name || data.category || ""
+  ).trim();
+  if (!industryName) {
+    return res.json({ error: "Industry name is required" });
+  }
+  await Industries.updateOne(
+    { id },
+    { $set: { industryCategory: industryName, updatedAt: new Date() } }
+  )
     .then(() => res.json({ msg: "success" }))
-    .catch((err) => console.log("industries update", err));
+    .catch((err) => {
+      console.log("industries update", err);
+      res.json({ error: "industries update failed" });
+    });
 };
 
 exports.getIndustries = async (req, res) => {
