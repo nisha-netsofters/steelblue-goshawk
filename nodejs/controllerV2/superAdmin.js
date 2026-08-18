@@ -15,61 +15,73 @@ exports.loginUser = async (req, res) => {
   const { email, password } = req.body;
   const userDetail = await Users.findOne({ email });
   if (!userDetail) {
-    res.json({
+    return res.json({
       msg: "user is not valid",
     });
   }
-  bcrypt.compare(password, userDetail?.password, async function (err, result) {
-    if (result) {
-      await Users.aggregate([
-        { $match: { email } },
-        {
-          $lookup: {
-            from: "role",
-            localField: "roleId",
-            foreignField: "id",
-            as: "role",
-          },
+
+  const isPasswordValid = await bcrypt.compare(
+    password || "",
+    userDetail.password || ""
+  );
+  if (!isPasswordValid) {
+    return res.json({
+      msg: "password is not valid",
+    });
+  }
+
+  try {
+    const result = await Users.aggregate([
+      { $match: { email } },
+      {
+        $lookup: {
+          from: "role",
+          localField: "roleId",
+          foreignField: "id",
+          as: "role",
         },
-        {
-          $addFields: {
-            role: { $arrayElemAt: ["$role", 0] },
-          },
+      },
+      {
+        $addFields: {
+          role: { $arrayElemAt: ["$role", 0] },
         },
-        { $project: { password: 0 } },
-      ])
-        .then(async (result) => {
-          let userData = result[0];
-          let role = {
-            name: "SuperAdmin",
-          };
-          userData["role"] = role;
-          if (result?.length > 0) {
-            jwt.sign(
-              { userDetail },
-              process.env.SECRET,
-              { expiresIn: process.env.EXPIRES_IN },
-              (err, token) => {
-                res.json({
-                  token,
-                  user: userData,
-                });
-              }
-            );
-          } else {
-            res.json({
-              msg: "user is not valid",
-            });
-          }
-        })
-        .catch((err) => {
-          console.log("login", err);
-          res.json({
+      },
+      { $project: { password: 0 } },
+    ]);
+
+    if (!result?.length) {
+      return res.json({
+        msg: "user is not valid",
+      });
+    }
+
+    const userData = result[0];
+    userData.role = {
+      name: "SuperAdmin",
+    };
+
+    jwt.sign(
+      { userDetail },
+      process.env.SECRET,
+      { expiresIn: process.env.EXPIRES_IN },
+      (err, token) => {
+        if (err) {
+          return res.json({
             msg: "user is not valid",
           });
+        }
+        return res.json({
+          token,
+          user: userData,
         });
-    }
-  });
+      }
+    );
+  } catch (err) {
+    console.log("login", err);
+    return res.json({
+      msg: "user is not valid",
+    });
+  }
 };
 
 exports.VerifyToken = async (req, res) => {

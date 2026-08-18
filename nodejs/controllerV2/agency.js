@@ -1,4 +1,5 @@
 const jwt = require("jsonwebtoken");
+const bcrypt = require("bcryptjs");
 const Agency = require("../models-v2/agency_Mongooes");
 const Users = require("../models-v2/users_Mongoose");
 const Role = require("../models-v2/role_Mongoose");
@@ -253,65 +254,90 @@ exports.getAgency = async (req, res) => {
 
 exports.updateAgency = async (req, res) => {
   try {
-    let { id, _id, ...userdata } = req.body;
-    if (!req.body.id) {
-      return res.status(400).send({
+    const body = req.body || {};
+    if (!body.id) {
+      return res.json({
         isSuccess: false,
         message: "Agency id field is required",
+        error: "Agency id field is required",
         data: null,
       });
     }
 
-    // Security: Prevent password update via this route
-    if ("password" in userdata) delete userdata.password;
-    if ("isBcrypt" in userdata) delete userdata.isBcrypt;
-
-    let findAgency = await Agency.findOne({ id: req.body.id });
+    const findAgency = await Agency.findOne({ id: String(body.id) });
     if (!findAgency) {
-      return res.status(404).send({
+      return res.json({
         isSuccess: false,
         message: "Agency not found",
+        error: "Agency not found",
         data: null,
       });
     }
 
-    let findUser = await Users.aggregate([
-      {
-        $match: {
-          agencyId: findAgency?.id,
-        },
-      },
-      {
-        $match: {
-          email: findAgency?.email,
-        },
-      },
-    ]);
+    const allowed = [
+      "slug",
+      "name",
+      "ownersName",
+      "mobileNumber",
+      "phoneNumber",
+      "email",
+      "address",
+      "country",
+      "countryId",
+      "state",
+      "stateId",
+      "city",
+      "cityId",
+      "themecolor",
+      "whatsapp",
+      "whatsappLink",
+      "gstNo",
+      "pancardNo",
+      "cinNumber",
+      "permission",
+      "logo",
+      "bannerImage",
+      "isDownloadAble",
+      "isDeleted",
+      "months",
+      "exprireDate",
+      "expirable",
+    ];
+    const userdata = {};
+    allowed.forEach((key) => {
+      if (body[key] !== undefined) userdata[key] = body[key];
+    });
 
-    if (!findUser.length) {
-      return res.status(404).send({
-        isSuccess: false,
-        message: "User not found in this agency",
-        data: null,
-      });
+    await Agency.updateOne({ id: findAgency.id }, { $set: userdata });
+
+    const agencyId = String(findAgency.id);
+    const findUser =
+      (await Users.findOne({
+        agencyId,
+        email: findAgency.email,
+      })) ||
+      (await Users.findOne({ agencyId })) ||
+      (await Users.findOne({ email: findAgency.email }));
+
+    if (findUser) {
+      const userUpdate = {};
+      if (userdata.email) userUpdate.email = userdata.email;
+      if (userdata.address) userUpdate.address = userdata.address;
+      if (userdata.city) userUpdate.city = userdata.city;
+      if (userdata.state) userUpdate.state = userdata.state;
+      if (userdata.cityId) userUpdate.cityId = userdata.cityId;
+      if (userdata.stateId) userUpdate.stateId = userdata.stateId;
+      if (userdata.mobileNumber) userUpdate.mobile = userdata.mobileNumber;
+      if (userdata.ownersName || userdata.name) {
+        userUpdate.name = userdata.ownersName || userdata.name;
+      }
+      if (Object.keys(userUpdate).length) {
+        await Users.updateOne({ id: findUser.id }, { $set: userUpdate });
+      }
     }
 
-    let updatedAgency = await Agency.updateOne(
-      { id: req.body.id },
-      { ...userdata }
-    );
-    let updatedUser = await Users.updateOne(
-      { id: findUser[0].id },
-      { $set: { ...userdata } }
-    );
-
-    if (updatedAgency.nModified === 0 || updatedUser.nModified === 0) {
-      throw new Error("Failed to update agency or user");
-    }
-
-    let updatedAgencyData = await Agency.findOne({ id: req.body.id });
-
-    res.status(200).send({
+    const updatedAgencyData = await Agency.findOne({ id: findAgency.id });
+    return res.json({
       isSuccess: true,
       data: {
         agency: updatedAgencyData,
@@ -320,9 +346,10 @@ exports.updateAgency = async (req, res) => {
     });
   } catch (error) {
     console.error("Error in agency update:", error);
-    res.status(500).send({
+    return res.json({
       isSuccess: false,
       message: "Something went wrong in agency update",
+      error: "Something went wrong in agency update",
       data: null,
     });
   }
