@@ -405,6 +405,11 @@ const PLACEHOLDER_MAP = {
   "{{companyName}}": (c) => pickStr(c?.companyName, c?.companyname),
   "{{companyowner}}": (c) =>
     pickStr(c?.companyowner, c?.companyOwner, c?.name),
+  "{{planName}}": (c) => pickStr(c?.planName, c?.plan?.planName),
+  "{{planPrice}}": (c) => pickStr(c?.planPrice, c?.plan?.price, c?.price),
+  "{{planDuration}}": (c) =>
+    pickStr(c?.planDuration, c?.timeDuration, c?.subscription?.timeDuration),
+  "{{planExpiry}}": (c) => pickStr(c?.planExpiry),
 };
 
 const resolveByToken = (token, candidate) => {
@@ -577,6 +582,40 @@ const pickPublicImageLink = (rawLink) => {
 const isBridgeBodyParamName = (name) =>
   /^(body|header|button|footer)_\d+$/i.test(String(name || "").trim());
 
+/** Sample cURL tokens like BUTTON_0_VALUE / BODY_1_VALUE — never send these to WhatsApp */
+const isSampleCurlPlaceholder = (text) =>
+  /^(BODY|HEADER|BUTTON|FOOTER)_\d+_VALUE$/i.test(String(text || "").trim());
+
+/**
+ * WhatsApp URL buttons APPEND this text onto the template's static URL.
+ * Meta already has: .../login?redirect=%2Funiqueworld%2Fprofile{{1}}
+ * Empty {{1}} → WhatsApp rejects the template (second message never sends).
+ * Sending another path → /profile/uniqueworld/profile (duplicate).
+ * Send "/" so the final redirect is /uniqueworld/profile/ and the template is accepted.
+ */
+const resolveUrlButtonSuffix = (rawText, candidate) => {
+  let text = rawText == null ? "" : String(rawText).trim();
+  if (!text || isSampleCurlPlaceholder(text)) return "/";
+
+  if (/^\{\{[^}]+\}\}$/.test(text) || PLACEHOLDER_MAP[`{{${text.toLowerCase()}}}`]) {
+    text = resolveByToken(text, candidate || {}) || "";
+  } else if (/\{\{[^}]+\}\}/.test(text)) {
+    text = resolvePlaceholders(text, candidate || {});
+  }
+
+  text = String(text || "").trim();
+  if (
+    !text ||
+    isSampleCurlPlaceholder(text) ||
+    /^https?:\/\//i.test(text) ||
+    /uniqueworld\/profile/i.test(decodeURIComponent(text)) ||
+    /%2Funiqueworld%2Fprofile/i.test(text)
+  ) {
+    return "/";
+  }
+  return text;
+};
+
 /**
  * WhatsApp #132012 / #132018 — normalize components.
  * Postman parity: keep parameter_name from cURL (body_1/body_2) on first try.
@@ -600,9 +639,15 @@ const sanitizeTemplatePayload = (payload, options = {}) => {
     : undefined;
 
   const template = { ...next.template };
-  const componentsIn = Array.isArray(template.components)
-    ? template.components
-    : [];
+  let componentsIn = template.components;
+  if (typeof componentsIn === "string") {
+    try {
+      componentsIn = JSON.parse(componentsIn);
+    } catch (e) {
+      componentsIn = [];
+    }
+  }
+  if (!Array.isArray(componentsIn)) componentsIn = [];
 
   const collectBodyNames = [];
   componentsIn.forEach((comp) => {
@@ -667,6 +712,20 @@ const sanitizeTemplatePayload = (payload, options = {}) => {
       (comp.parameters || []).forEach((p) => {
         if (!p || !p.type) return;
         if (p.type === "text") {
+          const isUrlButton =
+            compType === "button" &&
+            (String(comp.sub_type || "").toLowerCase() === "url" ||
+              isSampleCurlPlaceholder(p.text));
+
+          if (isUrlButton) {
+            const suffix = resolveUrlButtonSuffix(
+              p.text,
+              options.candidate || {}
+            );
+            parameters.push({ type: "text", text: suffix });
+            return;
+          }
+
           let text = p.text == null ? "" : String(p.text);
           text = normalizePlaceholderSyntax(text).trim();
           const paramName = p.parameter_name
@@ -700,6 +759,10 @@ const sanitizeTemplatePayload = (payload, options = {}) => {
             !isBridgeBodyParamName(paramName)
           ) {
             text = resolveByToken(paramName, options.candidate || {});
+          }
+
+          if (isSampleCurlPlaceholder(text)) {
+            text = "";
           }
 
           // URLs (profile/resume) can be longer; plain text keep short like Postman samples
@@ -1258,7 +1321,19 @@ const sendSingleApi = async (api, candidate) => {
       return next;
     };
 
-    let finalPayload = forceTemplateIdentity(sanitized.payload);
+    const wipeSampleCurlTokens = (data) => {
+      try {
+        return JSON.parse(
+          JSON.stringify(data).replace(/"(BUTTON)_\d+_VALUE"/g, '"/"')
+        );
+      } catch (e) {
+        return data;
+      }
+    };
+
+    let finalPayload = wipeSampleCurlTokens(
+      forceTemplateIdentity(sanitized.payload)
+    );
     let usedNamed = sanitized.useNamed;
 
     console.info(
@@ -1278,7 +1353,7 @@ const sendSingleApi = async (api, candidate) => {
 
     const doRequest = async (data) => {
       // Always re-apply identity right before HTTP call (retries included)
-      const safeData = forceTemplateIdentity(data);
+      const safeData = wipeSampleCurlTokens(forceTemplateIdentity(data));
       const axiosConfig = {
         method,
         url: api.apiUrl,
@@ -1638,6 +1713,17 @@ const sendClientLikeWhatsapp = async (clientInput, trigger, logLabel) => {
     companyName: pickStr(client.companyName),
     companyowner: pickStr(client.companyowner, client.companyOwner, client.name),
     agencyId: client.agencyId,
+    planName: pickStr(client.planName, client.plan?.planName),
+    planPrice: pickStr(client.planPrice, client.plan?.price, client.price),
+    planDuration: pickStr(
+      client.planDuration,
+      client.timeDuration,
+      client.subscription?.timeDuration
+    ),
+    planExpiry: pickStr(client.planExpiry),
+    plan: client.plan,
+    subscription: client.subscription,
+    timeDuration: pickStr(client.timeDuration, client.planDuration),
   };
 
   const config = await exports.getWelcomeWhatsappConfig();
