@@ -9,6 +9,20 @@ const VALID_ACTIONS = [
   "professional",
 ];
 
+/** Keep under typical shared-hosting gateway limits (~60s). */
+const AI_HTTP_TIMEOUT_MS = 35000;
+
+const axiosAiConfig = {
+  timeout: AI_HTTP_TIMEOUT_MS,
+  headers: { "Content-Type": "application/json" },
+};
+
+const GEMINI_FALLBACK_MODELS = [
+  "gemini-2.0-flash",
+  "gemini-1.5-flash",
+  "gemini-1.5-pro",
+];
+
 /**
  * Map raw AI/provider errors to user-friendly validation messages.
  */
@@ -37,6 +51,18 @@ function buildAiError(provider, status, apiMsg = "") {
     err.code = "AI_RATE_LIMIT";
     err.message =
       "AI service rate limit reached. Please wait a moment and try again.";
+    return err;
+  }
+
+  if (
+    msg.includes("timeout") ||
+    msg.includes("timed out") ||
+    msg.includes("econnaborted") ||
+    msg.includes("etimedout")
+  ) {
+    err.code = "AI_TIMEOUT";
+    err.message =
+      "AI request timed out. Use a faster model (e.g. gemini-2.0-flash) in Super Admin → OCR & API Configuration, then try again.";
     return err;
   }
 
@@ -209,9 +235,10 @@ async function queryOpenAi(prompt, credentials, temperature) {
       response_format: { type: "json_object" },
     },
     {
+      ...axiosAiConfig,
       headers: {
+        ...axiosAiConfig.headers,
         Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
       },
     }
   );
@@ -222,58 +249,50 @@ async function queryOpenAi(prompt, credentials, temperature) {
 async function queryGemini(prompt, credentials, temperature) {
   const { apiKey, model } = credentials;
   const preferred = (model || "").trim();
-  const fallbackModels = [
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-2.0-flash",
-    "gemini-3.5-flash",
-    "gemini-1.5-flash",
-    "gemini-1.5-pro",
-  ];
-  const modelsToTry = [...new Set([preferred, ...fallbackModels].filter(Boolean))];
+  const modelsToTry = [
+    ...new Set([preferred, ...GEMINI_FALLBACK_MODELS].filter(Boolean)),
+  ].slice(0, 3);
   const errors = [];
   let authError = null;
 
   for (const activeModel of modelsToTry) {
-    // Prefer JSON mime; retry without it if the model rejects that config
-    const mimeModes = [true, false];
-    for (const useJsonMime of mimeModes) {
-      try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${activeModel}:generateContent?key=${apiKey}`;
-        const generationConfig = { temperature };
-        if (useJsonMime) {
-          generationConfig.responseMimeType = "application/json";
-        }
-        const response = await axios.post(url, {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${activeModel}:generateContent?key=${apiKey}`;
+      const response = await axios.post(
+        url,
+        {
           contents: [{ parts: [{ text: prompt }] }],
-          generationConfig,
-        });
-        const resText =
-          response.data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-        if (resText) return resText;
-        errors.push(`${activeModel}: empty response`);
-        break;
-      } catch (err) {
-        const status = err.response?.status;
-        const apiMsg =
-          err.response?.data?.error?.message || err.message || "Unknown Gemini error";
-        errors.push(`${activeModel}${useJsonMime ? "" : " (no-json-mime)"}: ${apiMsg}`);
+          generationConfig: {
+            temperature,
+            responseMimeType: "application/json",
+          },
+        },
+        axiosAiConfig
+      );
+      const resText =
+        response.data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      if (resText) return resText;
+      errors.push(`${activeModel}: empty response`);
+    } catch (err) {
+      const status = err.response?.status;
+      const apiMsg =
+        err.response?.data?.error?.message || err.message || "Unknown Gemini error";
+      errors.push(`${activeModel}: ${apiMsg}`);
 
-        const normalized = buildAiError("gemini", status, apiMsg);
-        if (normalized.code === "AI_API_KEY_INVALID") {
-          authError = normalized;
-          throw authError;
-        }
-
-        // Retry same model without JSON mime on 400; otherwise try next model
-        if (useJsonMime && status === 400) {
-          continue;
-        }
-        if (status === 404 || status === 429 || status === 400) {
-          break;
-        }
-        throw normalized;
+      if (err.code === "ECONNABORTED" || err.code === "ETIMEDOUT") {
+        throw buildAiError("gemini", 408, apiMsg);
       }
+
+      const normalized = buildAiError("gemini", status, apiMsg);
+      if (normalized.code === "AI_API_KEY_INVALID") {
+        authError = normalized;
+        throw authError;
+      }
+
+      if (status === 404 || status === 429 || status === 400) {
+        continue;
+      }
+      throw normalized;
     }
   }
 
@@ -298,10 +317,11 @@ async function queryClaude(prompt, credentials, temperature) {
       temperature,
     },
     {
+      ...axiosAiConfig,
       headers: {
+        ...axiosAiConfig.headers,
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
-        "Content-Type": "application/json",
       },
     }
   );
@@ -387,6 +407,9 @@ async function generateJobDescription(input = {}) {
     return normalizeJdResult(parseAiJson(rawJsonText));
   } catch (err) {
     if (err.code) throw err;
+    if (err.code === "ECONNABORTED" || err.code === "ETIMEDOUT") {
+      throw buildAiError(provider, 408, err.message);
+    }
     const status = err.response?.status;
     const apiMsg =
       err.response?.data?.error?.message || err.message || "Unknown AI error";

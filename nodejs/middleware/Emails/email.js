@@ -810,7 +810,25 @@ exports.sendCandidateJobApplyAlert = async (client, candidate, jobTitle, emailTo
 
 exports.sendNewJobOpeningAlert = async (candidate, emailTo, jobOpening) => {
   const subject = `Exciting New Opportunity: ${jobOpening?.designation || "New Job Opening"} at Unique World!`;
-  const jobDetailsLink = `${process.env.FRONTEND_APP_URL}/jobs/${jobOpening?.id || ""}`;
+  const frontendBase = String(
+    process.env.FRONTEND_APP_URL ||
+      "https://peachpuff-snail-327679.hostingersite.com"
+  ).replace(/\/$/, "");
+  const slug =
+    String(
+      candidate?.agencySlug ||
+        candidate?.slug ||
+        candidate?.agency?.slug ||
+        "uniqueworld"
+    ).trim() || "uniqueworld";
+  const jobId = String(jobOpening?.id || jobOpening?._id || "").trim();
+  const jobPath = jobId
+    ? `/${slug}/jobmatches?jobId=${encodeURIComponent(jobId)}`
+    : `/${slug}/jobmatches`;
+  // Candidate must login first, then land on Job Matches with this job open
+  const jobDetailsLink = `${frontendBase}/login?redirect=${encodeURIComponent(
+    jobPath
+  )}`;
 
   const formatSalary = (salary) => {
     if (salary == null) return "To be discussed";

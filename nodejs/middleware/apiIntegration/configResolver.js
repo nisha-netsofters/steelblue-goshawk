@@ -71,7 +71,7 @@ const getDefaultConfig = () => ({
         model: "gpt-4o",
         baseUrl: "https://api.openai.com/v1",
       },
-      gemini: { isEnabled: false, apiKey: "", model: "gemini-3.5-flash" },
+      gemini: { isEnabled: false, apiKey: "", model: "gemini-2.0-flash" },
       claude: {
         isEnabled: false,
         apiKey: "",

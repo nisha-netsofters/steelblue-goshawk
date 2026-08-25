@@ -6,19 +6,51 @@ const Agency = require("../models-v2/agency_Mongooes");
 const Users = require("../models-v2/users_Mongoose");
 const moment = require("moment");
 const Role = require("../models-v2/role_Mongoose");
-const { enqueueEmailJob } = require("../mq/emailProducer");
 const Clients = require("../models-v2/clients_Mongoose");
-const {
-  generateJobDescription,
-  VALID_ACTIONS,
-} = require("../services/jobDescriptionGenerator");
+
+let enqueueEmailJob = async () => {};
+try {
+  ({ enqueueEmailJob } = require("../mq/emailProducer"));
+} catch (e) {
+  console.error("emailProducer load failed:", e?.message || e);
+}
+
+let generateJobDescription = async () => {
+  const err = new Error(
+    "Job description generator is not available on this server."
+  );
+  err.code = "API_CONFIG_NOT_SET";
+  throw err;
+};
+let VALID_ACTIONS = [
+  "generate",
+  "regenerate",
+  "improve",
+  "short",
+  "professional",
+];
+try {
+  ({ generateJobDescription, VALID_ACTIONS } = require("../services/jobDescriptionGenerator"));
+} catch (e) {
+  console.error("jobDescriptionGenerator load failed:", e?.message || e);
+}
 
 let buildProfileCompletenessAddFieldsStages = () => [];
+let getProfileCompletionMatchStage = () => null;
 try {
-  ({ buildProfileCompletenessAddFieldsStages } =
-    require("../services/profileCompleteness"));
+  ({
+    buildProfileCompletenessAddFieldsStages,
+    getProfileCompletionMatchStage,
+  } = require("../services/profileCompleteness"));
 } catch (e) {
   console.error("profileCompleteness load failed:", e?.message || e);
+}
+
+let getInterviewStatusStages = () => [];
+try {
+  ({ getInterviewStatusStages } = require("../services/candidateQuickFilter"));
+} catch (e) {
+  console.error("candidateQuickFilter load failed:", e?.message || e);
 }
 
 const MATCH_SCORE_MAX_POINTS = 70;
@@ -97,10 +129,251 @@ const buildBestMatchBaseFilter = (jobOpening) => {
   if (jobOpening?.gender && jobOpening.gender !== "both") {
     filter.gender = new RegExp(`^${String(jobOpening.gender).trim()}$`, "i");
   }
+  return filter;
+};
+
+const buildNewMatchBaseFilter = (jobOpening) => {
+  const filter = {};
+  if (jobOpening?.jobCategoryId) {
+    filter["professional.jobCategoryId"] = jobOpening.jobCategoryId;
+  }
+  if (jobOpening?.gender && jobOpening.gender !== "both") {
+    filter.gender = new RegExp(`^${String(jobOpening.gender).trim()}$`, "i");
+  }
   if (jobOpening?.createdAt) {
-    filter.createdAt = { $lt: new Date(jobOpening.createdAt) };
+    filter.createdAt = { $gte: new Date(jobOpening.createdAt) };
   }
   return filter;
+};
+
+const MATCH_DURATION_DAYS = {
+  "1day": 1,
+  "7days": 7,
+  "30days": 30,
+  "3months": 90,
+  "6months": 180,
+  "9months": 270,
+  "12months": 365,
+};
+
+const applyMatchDurationFilter = (filter, matchDuration) => {
+  if (!matchDuration || !MATCH_DURATION_DAYS[matchDuration]) return filter;
+  const cutoff = new Date(
+    Date.now() - MATCH_DURATION_DAYS[matchDuration] * 24 * 60 * 60 * 1000
+  );
+  const existingCreatedAt =
+    filter.createdAt && typeof filter.createdAt === "object"
+      ? filter.createdAt
+      : {};
+  return {
+    ...filter,
+    createdAt: { ...existingCreatedAt, $gte: cutoff },
+  };
+};
+
+const getLatestInterviewLookupStages = (agencyId) => [
+  {
+    $lookup: {
+      from: "interviews",
+      localField: "id",
+      foreignField: "candidateId",
+      as: "candidateInterviews",
+      pipeline: [
+        { $match: { agencyId, isdeleted: 0 } },
+        { $sort: { createdAt: -1 } },
+        { $limit: 1 },
+      ],
+    },
+  },
+  {
+    $addFields: {
+      latestInterview: { $arrayElemAt: ["$candidateInterviews", 0] },
+    },
+  },
+  { $project: { candidateInterviews: 0 } },
+];
+
+const getViewedByCurrentUserStages = (agencyId, userId) => {
+  if (!agencyId || !userId) return [];
+  const agencyIdStr = String(agencyId);
+  const userIdStr = String(userId);
+  return [
+    {
+      $lookup: {
+        from: "viewCandidates",
+        localField: "id",
+        foreignField: "candidateid",
+        as: "currentUserViews",
+        pipeline: [
+          {
+            $match: {
+              agencyId: agencyIdStr,
+              userId: { $in: [userIdStr] },
+            },
+          },
+        ],
+      },
+    },
+    {
+      $addFields: {
+        viewedByCurrentUser: { $gt: [{ $size: "$currentUserViews" }, 0] },
+      },
+    },
+    { $project: { currentUserViews: 0 } },
+  ];
+};
+
+const runMatchCandidateQuery = async (req, res, matchType) => {
+  try {
+    const jobOpeningid = req.params.id;
+    let page = Number(req.query.page) || 1;
+    let perPage = Number(req.query.perPage) || 10;
+    page -= 1;
+    const sortBy = req.query.sortBy || "newToOld";
+    const matchScoreFilter = req.query.matchScore || "";
+    const profileCompletionFilter = req.query.profileCompletion || "";
+    const matchDuration = req.query.matchDuration || "";
+
+    const jobOpening = await JobOpening.findOne({ id: jobOpeningid });
+    if (!jobOpening) {
+      return res.status(404).json({ msg: "Job opening not found" });
+    }
+
+    const agencyId = req.headers["agencyid"];
+    const userId = req.headers.userid || req.query.userId;
+    const agencydiv = await Agency.findOne({ id: agencyId });
+    const uniqueworld = await Agency.findOne({
+      email: "uniqueworldjobs@gmail.com",
+    });
+    const filterforagency = buildAgencyMergeFilter(
+      agencydiv,
+      agencyId,
+      uniqueworld
+    );
+
+    let filter =
+      matchType === "new"
+        ? buildNewMatchBaseFilter(jobOpening)
+        : buildBestMatchBaseFilter(jobOpening);
+    filter = applyMatchDurationFilter(filter, matchDuration);
+
+    const matchScoreStage = getMatchScoreMatchStage(matchScoreFilter);
+    const profileCompletionStage = getProfileCompletionMatchStage(
+      profileCompletionFilter
+    );
+    const profileStages = buildProfileCompletenessAddFieldsStages();
+
+    const pipeline = [
+      { $match: filter },
+      {
+        $lookup: {
+          from: "agency",
+          localField: "agencyId",
+          foreignField: "id",
+          as: "agency",
+          pipeline: [{ $project: { password: 0 } }],
+        },
+      },
+      {
+        $addFields: {
+          agency: { $arrayElemAt: ["$agency", 0] },
+        },
+      },
+      ...(Object.keys(filterforagency).length
+        ? [{ $match: filterforagency }]
+        : []),
+      {
+        $lookup: {
+          from: "interviewRequest",
+          localField: "id",
+          foreignField: "candidateId",
+          as: "interviewRequest",
+          pipeline: [{ $sort: { createdAt: 1 } }],
+        },
+      },
+      {
+        $addFields: {
+          interviewRequest: {
+            $map: {
+              input: "$interviewRequest",
+              as: "request",
+              in: {
+                $mergeObjects: [
+                  "$$request",
+                  {
+                    days: {
+                      $divide: [
+                        { $subtract: [new Date(), "$$request.createdAt"] },
+                        1000 * 3600 * 24,
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      },
+      {
+        $addFields: {
+          interviewRequest: {
+            $map: {
+              input: "$interviewRequest",
+              as: "request",
+              in: {
+                $mergeObjects: [
+                  "$$request",
+                  {
+                    isdisabled: {
+                      $lte: [
+                        "$$request.days",
+                        Number(process.env.INTERVIEW_REQUEST_DURATION) || 7,
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      },
+      {
+        $addFields: {
+          interview_request: { $arrayElemAt: ["$interviewRequest", 0] },
+        },
+      },
+      { $project: { interviewRequest: 0 } },
+      ...getInterviewStatusStages(agencyId, null),
+      ...getLatestInterviewLookupStages(agencyId),
+      ...getViewedByCurrentUserStages(agencyId, userId),
+      { $addFields: buildCandidateMatchScoreAddFields(jobOpening) },
+      ...profileStages,
+      ...(matchScoreStage ? [matchScoreStage] : []),
+      ...(profileCompletionStage ? [profileCompletionStage] : []),
+      buildBestMatchSortStage(sortBy),
+      {
+        $facet: {
+          data: [{ $skip: page * perPage }, { $limit: perPage }],
+          count: [{ $group: { _id: null, count: { $sum: 1 } } }],
+        },
+      },
+    ];
+
+    const matchCandidates = await Candidates.aggregate(pipeline);
+    const result = {
+      data: matchCandidates[0]?.data || [],
+      count: matchCandidates[0]?.count?.[0]?.count || 0,
+    };
+    res.json({
+      results: result.data,
+      total: result.count,
+    });
+  } catch (error) {
+    console.error(`${matchType}MatchCandidate error:`, error);
+    res.status(500).json({
+      msg: "Internal error",
+    });
+  }
 };
 
 const buildAgencyMergeFilter = (agencydiv, agencyId, uniqueworld) => {
@@ -281,78 +554,30 @@ const canPublishOrArchive = (roleName) => roleName === "Admin";
 const canCloseJob = (roleName) =>
   roleName === "Admin" || roleName === "Client" || isStaffRole(roleName);
 
-// --- START: Extracted and adapted candidate matching logic ---
-// This function consolidates candidate matching logic for email notifications.
-// It leverages filtering similar to your existing `bestMatchCandidate` endpoint.
-const getMatchingCandidatesForEmail = async (jobOpening, agencyIdFromHeaders) => {
-  // Fetch agency details only if agencyId is provided in headers
-  const agencydiv = agencyIdFromHeaders ? await Agency.findOne({ id: agencyIdFromHeaders }) : null;
-  const uniqueworld = await Agency.findOne({ email: "uniqueworldjobs@gmail.com" });
+// Same candidate pool as Best Match UI (category + gender + agency merge; no date cutoff).
+const getBestMatchCandidatesForNotify = async (jobOpening, agencyIdFromHeaders) => {
+  const agencydiv = agencyIdFromHeaders
+    ? await Agency.findOne({ id: agencyIdFromHeaders })
+    : null;
+  const uniqueworld = await Agency.findOne({
+    email: "uniqueworldjobs@gmail.com",
+  });
+  const filterforagency = buildAgencyMergeFilter(
+    agencydiv,
+    agencyIdFromHeaders,
+    uniqueworld
+  );
+  const filter = buildBestMatchBaseFilter(jobOpening);
 
-  let filterforagency = {};
-  if (agencydiv?.permission?.dataMerge?.allAgency === true) {
-    filterforagency = {
-      ...filterforagency,
-      $or: [
-        { "agency.permission.dataMerge.allAgency": true },
-        { "agency.id": agencydiv.id },
-      ],
-    };
-  } else if (agencydiv?.permission?.dataMerge?.uniqueworld === true) {
-    filterforagency = {
-      ...filterforagency,
-      $or: [{ "agency.id": agencyIdFromHeaders }, { "agency.id": uniqueworld.id }],
-    };
-  } else if (agencyIdFromHeaders) {
-    // If no specific merge permissions, just filter by the current agency
-    filterforagency = {
-      ...filterforagency,
-      "agency.id": agencyIdFromHeaders,
-    };
-  }
-
-  let filter = {};
-  if (jobOpening?.jobLocation) {
-    // Escape special regex characters to avoid runtime errors with values like "New York"
-    const escapedLocation = jobOpening.jobLocation.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    filter = {
-      ...filter,
-      city: new RegExp(escapedLocation, "i"), // only notify candidates in same city as job
-    };
-  }
-  if (jobOpening) {
-    filter = {
-      ...filter,
-      "professional.jobCategoryId": jobOpening?.jobCategoryId,
-      "professional.experienceInyear": jobOpening?.minExperienceYears,
-      "professional.expectedsalary": {
-        $gte: jobOpening?.salaryRangeStart,
-        $lte: jobOpening?.salaryRangeEnd,
-      },
-    };
-  }
-  if (jobOpening?.gender !== "both") {
-    filter = {
-      ...filter,
-      gender: jobOpening?.gender,
-    };
-  }
-
-  const matchingCandidates = await Candidates.aggregate([
-    {
-      $match: { ...filter }, // Initial match based on job criteria
-    },
+  return Candidates.aggregate([
+    { $match: filter },
     {
       $lookup: {
         from: "agency",
         localField: "agencyId",
         foreignField: "id",
         as: "agency",
-        pipeline: [
-          {
-            $project: { password: 0 },
-          },
-        ],
+        pipeline: [{ $project: { password: 0 } }],
       },
     },
     {
@@ -360,28 +585,131 @@ const getMatchingCandidatesForEmail = async (jobOpening, agencyIdFromHeaders) =>
         agency: { $arrayElemAt: ["$agency", 0] },
       },
     },
-    // Apply agency-specific filtering if any rules were generated
-    ...(Object.keys(filterforagency).length > 0 ? [{ $match: filterforagency }] : []),
+    ...(Object.keys(filterforagency).length
+      ? [{ $match: filterforagency }]
+      : []),
+    { $addFields: buildCandidateMatchScoreAddFields(jobOpening) },
     {
       $project: {
         id: 1,
         email: 1,
+        mobile: 1,
         firstname: 1,
         lastname: 1,
-        "professional.jobCategoryId": 1,
-        "professional.experienceInyear": 1,
-        "professional.expectedsalary": 1,
-        gender: 1,
-        city: 1,
         agencyId: 1,
+        city: 1,
+        matchScore: 1,
+        agency: 1,
       },
     },
   ]);
-
-  return matchingCandidates;
 };
-// --- END: Extracted and adapted candidate matching logic ---
 
+/**
+ * Notify Best Match candidates via email and/or WhatsApp (same content as job create).
+ * @param {object} jobOpening
+ * @param {string|undefined} agencyIdFromHeaders
+ * @param {{ notifyEmail?: boolean, notifyWhatsapp?: boolean }} options
+ */
+const notifyBestMatchCandidates = async (
+  jobOpening,
+  agencyIdFromHeaders,
+  options = {}
+) => {
+  const notifyEmail = options.notifyEmail !== false;
+  const notifyWhatsapp = options.notifyWhatsapp !== false;
+
+  if (!notifyEmail && !notifyWhatsapp) {
+    console.log(
+      `Best Match notify skipped for job ${jobOpening?.id} (no channels selected).`
+    );
+    return;
+  }
+
+  const matchingCandidates = await getBestMatchCandidatesForNotify(
+    jobOpening,
+    agencyIdFromHeaders
+  );
+
+  if (!matchingCandidates || matchingCandidates.length === 0) {
+    console.log(
+      `No Best Match candidates for job ${jobOpening.id}. No email/WhatsApp sent.`
+    );
+    return;
+  }
+
+  let sendNewJobBestMatchWhatsapp = async () => ({ skipped: true });
+  if (notifyWhatsapp) {
+    try {
+      ({ sendNewJobBestMatchWhatsapp } = require("../middleware/whatsappMSG/welcomeMessage"));
+    } catch (wpRequireErr) {
+      console.warn(
+        "WhatsApp module load failed — email only:",
+        wpRequireErr?.message || wpRequireErr
+      );
+    }
+  }
+
+  const gapMs = Number(process.env.WHATSAPP_MULTI_API_DELAY_MS);
+  const betweenCandidatesMs =
+    Number.isFinite(gapMs) && gapMs >= 0 ? gapMs : 1500;
+
+  console.log(
+    `Notifying ${matchingCandidates.length} Best Match candidate(s) for job ${jobOpening.id} (email=${notifyEmail}, whatsapp=${notifyWhatsapp})`
+  );
+
+  for (let i = 0; i < matchingCandidates.length; i += 1) {
+    const candidate = matchingCandidates[i];
+
+    if (notifyEmail && candidate.email) {
+      try {
+        await enqueueEmailJob("newJobOpeningAlert", {
+          candidate: {
+            firstname: candidate.firstname,
+            lastname: candidate.lastname,
+            email: candidate.email,
+            agencySlug:
+              candidate?.agency?.slug ||
+              candidate?.agencySlug ||
+              "uniqueworld",
+          },
+          emailTo: candidate.email,
+          jobOpening: {
+            id: jobOpening.id,
+            designation: jobOpening.designation,
+            jobLocation: jobOpening.jobLocation,
+            minExperienceYears: jobOpening.minExperienceYears,
+            salaryRangeStart: jobOpening.salaryRangeStart,
+            salaryRangeEnd: jobOpening.salaryRangeEnd,
+          },
+        });
+      } catch (emailErr) {
+        console.error(
+          `Email enqueue failed for ${candidate.email}:`,
+          emailErr?.message || emailErr
+        );
+      }
+    }
+
+    if (notifyWhatsapp && candidate.mobile) {
+      try {
+        if (i > 0 && betweenCandidatesMs > 0) {
+          await new Promise((r) => setTimeout(r, betweenCandidatesMs));
+        }
+        await sendNewJobBestMatchWhatsapp(candidate, jobOpening);
+      } catch (wpErr) {
+        console.error(
+          `WhatsApp failed for candidate ${candidate.id}:`,
+          wpErr?.message || wpErr
+        );
+      }
+    }
+  }
+
+  console.log(
+    `Best Match notify done for job ${jobOpening.id} (${matchingCandidates.length} candidates)`
+  );
+};
 
 exports.createJobOpening = async (req, res) => {
   const data = req.body;
@@ -429,45 +757,20 @@ exports.createJobOpening = async (req, res) => {
     //     : newJobOpening;
     res.json(newJobOpening);
 
-    // Asynchronously enqueue email jobs after the response has been sent.
+    // Asynchronously notify Best Match candidates (email + WhatsApp) after response.
     if (newJobOpening) {
       process.nextTick(async () => {
         try {
-          // Pass req.headers["agencyid"] to the new matching function
-          const agencyId = req.headers["agencyid"];
-          const matchingCandidates = await getMatchingCandidatesForEmail(newJobOpening, agencyId);
-
-          if (matchingCandidates && matchingCandidates.length > 0) {
-            for (const candidate of matchingCandidates) {
-              if (candidate.email) {
-                // Enqueue an email job for each matching candidate
-                await enqueueEmailJob("newJobOpeningAlert", {
-                  candidate: {
-                    firstname: candidate.firstname,
-                    lastname: candidate.lastname,
-                    email: candidate.email,
-                  },
-                  emailTo: candidate.email,
-                  jobOpening: {
-                    id: newJobOpening.id,
-                    designation: newJobOpening.designation,
-                    jobLocation: newJobOpening.jobLocation,
-                    minExperienceYears: newJobOpening.minExperienceYears,
-                    salaryRangeStart: newJobOpening.salaryRangeStart,
-                    salaryRangeEnd: newJobOpening.salaryRangeEnd,
-                  },
-                });
-                console.log(`Enqueued email job for candidate ${candidate.email} for job ${newJobOpening.id}`);
-              } else {
-                console.warn(`Skipping email enqueue for candidate without email: ${candidate.id}`);
-              }
-            }
-            console.log(`All email jobs enqueued for job opening ${newJobOpening.id}`);
-          } else {
-            console.log(`No matching candidates found for job opening ${newJobOpening.id}. No emails enqueued.`);
-          }
+          await notifyBestMatchCandidates(
+            newJobOpening,
+            req.headers["agencyid"],
+            { notifyEmail: true, notifyWhatsapp: true }
+          );
         } catch (queueError) {
-          console.error(`Error during asynchronous email job enqueue for job ${newJobOpening.id}:`, queueError);
+          console.error(
+            `Error notifying Best Match candidates for job ${newJobOpening.id}:`,
+            queueError
+          );
         }
       });
     }
@@ -500,6 +803,14 @@ exports.getOnJobOpening = async (req, res) => {
       };
     } else if (roleName === "Client") {
       scopeMatch = { userId: authUserId || userId };
+    }
+
+    const body = req.body || {};
+    if (body.recruiterId) {
+      scopeMatch = { ...scopeMatch, recruiterId: body.recruiterId };
+    }
+    if (body.jobCategoryId) {
+      scopeMatch = { ...scopeMatch, jobCategoryId: body.jobCategoryId };
     }
 
     const jobOpeningFilter = await JobOpening.aggregate([
@@ -763,142 +1074,11 @@ exports.deleteJobOpening = async (req, res) => {
   }
 };
 
-exports.bestMatchCandidate = async (req, res) => {
-  try {
-    const jobOpeningid = req.params.id;
-    let page = Number(req.query.page) || 1;
-    let perPage = Number(req.query.perPage) || 10;
-    page -= 1;
-    const sortBy = req.query.sortBy || "bestMatch";
-    const matchScoreFilter = req.query.matchScore || "";
+exports.bestMatchCandidate = async (req, res) =>
+  runMatchCandidateQuery(req, res, "best");
 
-    const jobOpening = await JobOpening.findOne({ id: jobOpeningid });
-    if (!jobOpening) {
-      return res.status(404).json({ msg: "Job opening not found" });
-    }
-
-    const agencyId = req.headers["agencyid"];
-    const agencydiv = await Agency.findOne({ id: agencyId });
-    const uniqueworld = await Agency.findOne({
-      email: "uniqueworldjobs@gmail.com",
-    });
-    const filterforagency = buildAgencyMergeFilter(
-      agencydiv,
-      agencyId,
-      uniqueworld
-    );
-    const filter = buildBestMatchBaseFilter(jobOpening);
-    const matchScoreStage = getMatchScoreMatchStage(matchScoreFilter);
-    const profileStages = buildProfileCompletenessAddFieldsStages();
-
-    const pipeline = [
-      { $match: filter },
-      {
-        $lookup: {
-          from: "agency",
-          localField: "agencyId",
-          foreignField: "id",
-          as: "agency",
-          pipeline: [{ $project: { password: 0 } }],
-        },
-      },
-      {
-        $addFields: {
-          agency: { $arrayElemAt: ["$agency", 0] },
-        },
-      },
-      ...(Object.keys(filterforagency).length
-        ? [{ $match: filterforagency }]
-        : []),
-      {
-        $lookup: {
-          from: "interviewRequest",
-          localField: "id",
-          foreignField: "candidateId",
-          as: "interviewRequest",
-          pipeline: [{ $sort: { createdAt: 1 } }],
-        },
-      },
-      {
-        $addFields: {
-          interviewRequest: {
-            $map: {
-              input: "$interviewRequest",
-              as: "request",
-              in: {
-                $mergeObjects: [
-                  "$$request",
-                  {
-                    days: {
-                      $divide: [
-                        { $subtract: [new Date(), "$$request.createdAt"] },
-                        1000 * 3600 * 24,
-                      ],
-                    },
-                  },
-                ],
-              },
-            },
-          },
-        },
-      },
-      {
-        $addFields: {
-          interviewRequest: {
-            $map: {
-              input: "$interviewRequest",
-              as: "request",
-              in: {
-                $mergeObjects: [
-                  "$$request",
-                  {
-                    isdisabled: {
-                      $lte: [
-                        "$$request.days",
-                        Number(process.env.INTERVIEW_REQUEST_DURATION) || 7,
-                      ],
-                    },
-                  },
-                ],
-              },
-            },
-          },
-        },
-      },
-      {
-        $addFields: {
-          interview_request: { $arrayElemAt: ["$interviewRequest", 0] },
-        },
-      },
-      { $project: { interviewRequest: 0 } },
-      { $addFields: buildCandidateMatchScoreAddFields(jobOpening) },
-      ...profileStages,
-      ...(matchScoreStage ? [matchScoreStage] : []),
-      buildBestMatchSortStage(sortBy),
-      {
-        $facet: {
-          data: [{ $skip: page * perPage }, { $limit: perPage }],
-          count: [{ $group: { _id: null, count: { $sum: 1 } } }],
-        },
-      },
-    ];
-
-    const bestMatchCandidates = await Candidates.aggregate(pipeline);
-    const result = {
-      data: bestMatchCandidates[0]?.data || [],
-      count: bestMatchCandidates[0]?.count?.[0]?.count || 0,
-    };
-    res.json({
-      results: result.data,
-      total: result.count,
-    });
-  } catch (error) {
-    console.error("bestMatchCandidate error:", error);
-    res.status(500).json({
-      msg: "Internal error",
-    });
-  }
-};
+exports.newMatchCandidate = async (req, res) =>
+  runMatchCandidateQuery(req, res, "new");
 exports.hotvacancy = async (req, res) => {
   try {
     let { page, perPage } = req.query;
@@ -1155,8 +1335,15 @@ exports.applyForJob = async (req, res) => {
       return res.status(404).json({ error: "Job opening not found" });
     }
 
-    // Fetch the client using jobOpening.userId
-    const clientWhoPostedJob = await Clients.findOne({ userId: jobOpening.userId });
+    // Admin/Recruiter posts: client is on jobOpening.clientId.
+    // Client posts: client is linked via jobOpening.userId.
+    let clientWhoPostedJob = null;
+    if (jobOpening.clientId) {
+      clientWhoPostedJob = await Clients.findOne({ id: String(jobOpening.clientId) });
+    }
+    if (!clientWhoPostedJob && jobOpening.userId) {
+      clientWhoPostedJob = await Clients.findOne({ userId: String(jobOpening.userId) });
+    }
 
     if (!clientWhoPostedJob) {
       return res.status(404).json({ error: "Client who posted this job not found" });
@@ -1182,8 +1369,11 @@ exports.applyForJob = async (req, res) => {
     });
 
     // Fetch client details for email notification
-    // The client object for email should contain the necessary fields, including userId for subscription check
-    const clientForEmail = { ...clientWhoPostedJob.toObject(), userId: jobOpening.userId };
+    // Prefer real client.userId (for Client-owned jobs) over job poster (Admin)
+    const clientForEmail = {
+      ...clientWhoPostedJob.toObject(),
+      userId: clientWhoPostedJob.userId || jobOpening.userId,
+    };
 
     if (clientForEmail) {
       await enqueueEmailJob("candidateJobApplyAlert", {
@@ -1230,9 +1420,12 @@ exports.getJobApplicants = async (req, res) => {
       const linkedCandidates = await Candidates.find({
         jobOpeningId: String(jobOpeningId),
       }).select("id");
-      const clientWhoPostedJob = await Clients.findOne({
-        userId: jobOpening.userId,
-      });
+      const clientWhoPostedJob =
+        (jobOpening.clientId &&
+          (await Clients.findOne({ id: String(jobOpening.clientId) }))) ||
+        (jobOpening.userId &&
+          (await Clients.findOne({ userId: String(jobOpening.userId) }))) ||
+        null;
       const clientId = clientWhoPostedJob?.id || jobOpening.clientId || null;
       if (clientId && linkedCandidates?.length) {
         for (const cand of linkedCandidates) {
@@ -1445,7 +1638,41 @@ exports.updateJobPostingStatus = async (req, res) => {
       });
     }
 
+    const prevStatus = String(existing.postingStatus || "open").toLowerCase();
+    const notifyEmail =
+      req.body?.notifyEmail === true || req.body?.notifyEmail === "true";
+    const notifyWhatsapp =
+      req.body?.notifyWhatsapp === true || req.body?.notifyWhatsapp === "true";
+
     await JobOpening.updateOne({ id }, { postingStatus });
+
+    // On publish: same Best Match email/WhatsApp as create — only channels admin selected.
+    if (
+      postingStatus === "published" &&
+      prevStatus !== "published" &&
+      (notifyEmail || notifyWhatsapp)
+    ) {
+      const jobForNotify =
+        typeof existing.toObject === "function"
+          ? { ...existing.toObject(), postingStatus: "published" }
+          : { ...existing, postingStatus: "published" };
+
+      process.nextTick(async () => {
+        try {
+          await notifyBestMatchCandidates(
+            jobForNotify,
+            req.headers["agencyid"],
+            { notifyEmail, notifyWhatsapp }
+          );
+        } catch (notifyErr) {
+          console.error(
+            `Error notifying Best Match candidates on publish for job ${id}:`,
+            notifyErr
+          );
+        }
+      });
+    }
+
     return res.status(200).json({
       success: true,
       msg: `Job ${postingStatus} successfully`,

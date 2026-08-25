@@ -19,6 +19,7 @@ const isApiEnabled = (api) => {
 
 const getApiAudience = (api) => {
   if (api?.id === "msg-client-plan" || api?.audience === "plan") return "plan";
+  if (api?.id === "msg-new-job-bestmatch" || api?.audience === "job") return "job";
   if (api?.id === "msg-client-welcome") return "client";
   if (
     api?.id === "msg-customer-welcome" ||
@@ -361,6 +362,19 @@ const buildCandidateProfileLink = (c) => {
 /** Same URL as profile link (legacy alias) */
 const buildCandidateEditLink = (c) => buildCandidateProfileLink(c);
 
+/**
+ * New-job alert "View Job" link for candidates.
+ * Login first, then open candidate Job Matches with that jobId so View/Apply modal opens.
+ */
+const buildCandidateJobDetailsLink = (c, jobId) => {
+  const id = String(jobId || "").trim();
+  const slug = getAgencySlug(c);
+  const jobPath = id
+    ? `/${slug}/jobmatches?jobId=${encodeURIComponent(id)}`
+    : `/${slug}/jobmatches`;
+  return `${getFrontendBaseUrl()}/login?redirect=${encodeURIComponent(jobPath)}`;
+};
+
 /** Public registration form — candidate can continue / edit (`/{slug}/candidate/apply?cid=`) */
 const buildCandidateRegistrationLink = (c) => {
   const id = getCandidateId(c);
@@ -410,6 +424,21 @@ const PLACEHOLDER_MAP = {
   "{{planDuration}}": (c) =>
     pickStr(c?.planDuration, c?.timeDuration, c?.subscription?.timeDuration),
   "{{planExpiry}}": (c) => pickStr(c?.planExpiry),
+  "{{jobTitle}}": (c) =>
+    pickStr(c?.jobTitle, c?.designation, c?.jobOpening?.designation),
+  "{{jobLocation}}": (c) =>
+    pickStr(c?.jobLocation, c?.jobOpening?.jobLocation),
+  "{{minExperienceYears}}": (c) =>
+    pickStr(
+      c?.minExperienceYears,
+      c?.jobOpening?.minExperienceYears,
+      c?.experienceRequired
+    ),
+  "{{salaryRangeStart}}": (c) =>
+    pickStr(c?.salaryRangeStart, c?.jobOpening?.salaryRangeStart),
+  "{{salaryRangeEnd}}": (c) =>
+    pickStr(c?.salaryRangeEnd, c?.jobOpening?.salaryRangeEnd),
+  "{{jobDetailsLink}}": (c) => pickStr(c?.jobDetailsLink),
 };
 
 const resolveByToken = (token, candidate) => {
@@ -1083,6 +1112,11 @@ const MSG_CONFIG_SLOTS_BACKEND = [
     audience: "plan",
     name: "Plan Assign",
   },
+  {
+    id: "msg-new-job-bestmatch",
+    audience: "job",
+    name: "New Job Best Match",
+  },
 ];
 
 const remapLegacySavedApi = (api) => {
@@ -1153,7 +1187,7 @@ const normalizeApisToSlots = (saved) => {
       usedIndexes.add(matchIdx);
       return mapApiRow(list[matchIdx], slot);
     }
-    if (slot.audience === "plan") {
+    if (slot.audience === "plan" || slot.audience === "job") {
       return emptySlotApi(slot);
     }
     const match = pickUnused();
@@ -1694,7 +1728,9 @@ exports.sendWelcomeWhatsapp = async (candidateInput, options = {}) => {
 };
 
 /**
- * Client / plan WhatsApp using Super Admin Msg cURL for the given trigger.
+ * Client / plan / job WhatsApp using Super Admin Msg cURL for the given trigger.
+ * Job trigger expects a pre-built person (candidate + job fields) from
+ * sendNewJobBestMatchWhatsapp — do NOT remap as a client company.
  */
 const sendClientLikeWhatsapp = async (clientInput, trigger, logLabel) => {
   const client =
@@ -1702,29 +1738,89 @@ const sendClientLikeWhatsapp = async (clientInput, trigger, logLabel) => {
       ? clientInput.toObject()
       : clientInput || {};
 
-  const person = {
-    id: client.id || client._id,
-    firstname: pickStr(client.companyowner, client.companyOwner, client.companyName, client.name),
-    lastname: "",
-    name: pickStr(client.companyowner, client.companyName, client.name),
-    mobile: pickStr(client.mobile, client.phone),
-    email: pickStr(client.email),
-    city: pickStr(client.city),
-    companyName: pickStr(client.companyName),
-    companyowner: pickStr(client.companyowner, client.companyOwner, client.name),
-    agencyId: client.agencyId,
-    planName: pickStr(client.planName, client.plan?.planName),
-    planPrice: pickStr(client.planPrice, client.plan?.price, client.price),
-    planDuration: pickStr(
-      client.planDuration,
-      client.timeDuration,
-      client.subscription?.timeDuration
-    ),
-    planExpiry: pickStr(client.planExpiry),
-    plan: client.plan,
-    subscription: client.subscription,
-    timeDuration: pickStr(client.timeDuration, client.planDuration),
-  };
+  let person;
+  if (trigger === "job") {
+    person = {
+      ...client,
+      id: client.id || client._id,
+      firstname: pickStr(
+        client.firstname,
+        client.firstName,
+        client.first_name,
+        client.name
+      ),
+      lastname: pickStr(client.lastname, client.lastName, client.last_name),
+      name: pickStr(
+        client.name,
+        [client.firstname, client.lastname].filter(Boolean).join(" ")
+      ),
+      mobile: pickStr(client.mobile, client.phone, client.phoneNumber),
+      email: pickStr(client.email),
+      city: pickStr(client.city),
+      agencyId: client.agencyId,
+      jobTitle: pickStr(
+        client.jobTitle,
+        client.designation,
+        client.jobOpening?.designation
+      ),
+      designation: pickStr(
+        client.jobTitle,
+        client.designation,
+        client.jobOpening?.designation
+      ),
+      jobLocation: pickStr(
+        client.jobLocation,
+        client.jobOpening?.jobLocation
+      ),
+      minExperienceYears: pickStr(
+        client.minExperienceYears,
+        client.jobOpening?.minExperienceYears
+      ),
+      salaryRangeStart: pickStr(
+        client.salaryRangeStart,
+        client.jobOpening?.salaryRangeStart
+      ),
+      salaryRangeEnd: pickStr(
+        client.salaryRangeEnd,
+        client.jobOpening?.salaryRangeEnd
+      ),
+      jobDetailsLink: pickStr(client.jobDetailsLink),
+      jobOpening: client.jobOpening,
+    };
+  } else {
+    person = {
+      id: client.id || client._id,
+      firstname: pickStr(
+        client.companyowner,
+        client.companyOwner,
+        client.companyName,
+        client.name
+      ),
+      lastname: "",
+      name: pickStr(client.companyowner, client.companyName, client.name),
+      mobile: pickStr(client.mobile, client.phone),
+      email: pickStr(client.email),
+      city: pickStr(client.city),
+      companyName: pickStr(client.companyName),
+      companyowner: pickStr(
+        client.companyowner,
+        client.companyOwner,
+        client.name
+      ),
+      agencyId: client.agencyId,
+      planName: pickStr(client.planName, client.plan?.planName),
+      planPrice: pickStr(client.planPrice, client.plan?.price, client.price),
+      planDuration: pickStr(
+        client.planDuration,
+        client.timeDuration,
+        client.subscription?.timeDuration
+      ),
+      planExpiry: pickStr(client.planExpiry),
+      plan: client.plan,
+      subscription: client.subscription,
+      timeDuration: pickStr(client.timeDuration, client.planDuration),
+    };
+  }
 
   const config = await exports.getWelcomeWhatsappConfig();
   const apis = Array.isArray(config.apis) ? config.apis : [];
@@ -1786,4 +1882,58 @@ exports.sendClientWelcomeWhatsapp = async (clientInput) =>
  */
 exports.sendPlanAssignWhatsapp = async (clientInput) =>
   sendClientLikeWhatsapp(clientInput, "plan", "Plan Msg API");
+
+/**
+ * New job create → WhatsApp to one Best Match candidate using Job slot cURL.
+ * Pass candidate fields + jobOpening; job placeholders are merged onto the person.
+ */
+exports.sendNewJobBestMatchWhatsapp = async (candidateInput, jobOpening = {}) => {
+  const candidate =
+    candidateInput && typeof candidateInput.toObject === "function"
+      ? candidateInput.toObject()
+      : candidateInput || {};
+
+  const job =
+    jobOpening && typeof jobOpening.toObject === "function"
+      ? jobOpening.toObject()
+      : jobOpening || {};
+
+  const jobId = job.id || job._id || "";
+  const agencySlug = pickStr(
+    candidate._agencySlug,
+    candidate.agencySlug,
+    candidate.slug,
+    candidate.agency?.slug,
+    candidate.agency?.agency?.slug
+  );
+  const personForLink = {
+    ...candidate,
+    _agencySlug: agencySlug || "uniqueworld",
+  };
+  const jobDetailsLink = buildCandidateJobDetailsLink(personForLink, jobId);
+
+  const person = {
+    ...candidate,
+    id: candidate.id || candidate._id,
+    firstname: pickStr(candidate.firstname, candidate.firstName),
+    lastname: pickStr(candidate.lastname, candidate.lastName),
+    mobile: pickStr(candidate.mobile, candidate.phone, candidate.phoneNumber),
+    email: pickStr(candidate.email),
+    city: pickStr(candidate.city),
+    agencyId: candidate.agencyId,
+    _agencySlug: agencySlug || "uniqueworld",
+    agencySlug: agencySlug || "uniqueworld",
+    slug: agencySlug || "uniqueworld",
+    jobTitle: pickStr(job.designation, job.jobTitle),
+    designation: pickStr(job.designation, job.jobTitle),
+    jobLocation: pickStr(job.jobLocation),
+    minExperienceYears: pickStr(job.minExperienceYears),
+    salaryRangeStart: pickStr(job.salaryRangeStart),
+    salaryRangeEnd: pickStr(job.salaryRangeEnd),
+    jobDetailsLink,
+    jobOpening: job,
+  };
+
+  return sendClientLikeWhatsapp(person, "job", "New Job Best Match Msg API");
+};
 
