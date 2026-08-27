@@ -3,25 +3,17 @@ const mongoose = require("mongoose");
 const Schema = mongoose.Schema;
 const model = mongoose.model;
 
-const education = new Schema(
+const educationSchema = new Schema(
   {
-    _id: {
-      type: Types.ObjectId,
-      default: Types.ObjectId, // generates a new ObjectId by default
-    },
-    id: {
-      type: String,
-    },
-    candidateId: String,
-    institute: String,
-    agencyId: String,
-    degree: String,
-    department: String,
-    english: String,
-    eductionDuration: String,
+    id: { type: String, index: true },
+    name: { type: String, required: true, index: true },
+    qualification: { type: String, required: true, index: true },
+    isdeleted: { type: Number, default: 0 },
   },
-  { collection: "education", versionKey: false, timestamps: true }
+  { collection: "educations", timestamps: true, versionKey: false }
 );
 
-const Education = model("education", education);
+educationSchema.index({ qualification: 1, name: 1 });
+
+const Education = model("educations", educationSchema);
 module.exports = Education;
