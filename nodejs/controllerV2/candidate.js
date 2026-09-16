@@ -2144,8 +2144,9 @@ exports.candidateUpdate = async (req, res) => {
     return res.json({ error: "Candidate id is required for update" });
   }
 
-  const email = String(candidate.email || "").trim();
-  const mobile = String(candidate.mobile || "").trim();
+  const email = String(candidate.email || "").trim().toLowerCase();
+  const mobileRaw = String(candidate.mobile || "").trim();
+  const mobile = mobileRaw.replace(/\D/g, "").slice(-10);
 
   // Empty email/mobile must not match other blank records.
   if (email) {
@@ -2156,19 +2157,26 @@ exports.candidateUpdate = async (req, res) => {
     if (existingCandidateEmail) {
       // Keep this candidate's current email; still allow resume/profile update
       delete candidate.email;
+    } else {
+      candidate.email = email;
     }
   } else {
     delete candidate.email;
   }
 
-  if (mobile) {
+  if (mobile && mobile.length === 10) {
     const existingCandidateMobile = await Candidates.findOne({
       mobile,
       id: { $ne: id },
     });
     if (existingCandidateMobile) {
       delete candidate.mobile;
+    } else {
+      candidate.mobile = mobile;
     }
+  } else if (mobileRaw) {
+    // keep typed value if not 10 digits yet — frontend validates; don't wipe
+    candidate.mobile = mobileRaw;
   } else {
     delete candidate.mobile;
   }
