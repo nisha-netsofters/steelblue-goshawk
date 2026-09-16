@@ -2138,15 +2138,30 @@ exports.candidateUpdate = async (req, res) => {
     ...candidate
   } = req.body;
 
+  // express-fileupload can send duplicate keys as arrays
+  const pickBodyScalar = (value) => {
+    if (Array.isArray(value)) {
+      const last = value[value.length - 1];
+      return last === undefined || last === null ? "" : last;
+    }
+    return value;
+  };
+
   if (Array.isArray(id)) id = id[id.length - 1];
   id = String(id || "").trim();
   if (!id) {
     return res.json({ error: "Candidate id is required for update" });
   }
 
+  candidate.email = pickBodyScalar(candidate.email);
+  candidate.mobile = pickBodyScalar(candidate.mobile);
+  candidate.alternateMobile = pickBodyScalar(candidate.alternateMobile);
+  candidate.firstname = pickBodyScalar(candidate.firstname);
+  candidate.lastname = pickBodyScalar(candidate.lastname);
+
   const email = String(candidate.email || "").trim().toLowerCase();
-  const mobileRaw = String(candidate.mobile || "").trim();
-  const mobile = mobileRaw.replace(/\D/g, "").slice(-10);
+  const mobile = normalizeIndianMobile(candidate.mobile);
+  const alternateMobile = normalizeIndianMobile(candidate.alternateMobile);
 
   // Empty email/mobile must not match other blank records.
   if (email) {
@@ -2155,30 +2170,46 @@ exports.candidateUpdate = async (req, res) => {
       id: { $ne: id },
     });
     if (existingCandidateEmail) {
-      // Keep this candidate's current email; still allow resume/profile update
-      delete candidate.email;
-    } else {
-      candidate.email = email;
+      return res.json({
+        error: "Email already used by another candidate",
+        constraint: "candidates_email_unique",
+      });
     }
+    candidate.email = email;
   } else {
     delete candidate.email;
   }
 
   if (mobile && mobile.length === 10) {
     const existingCandidateMobile = await Candidates.findOne({
-      mobile,
-      id: { $ne: id },
+      $and: [
+        { id: { $ne: id } },
+        {
+          $or: [
+            { mobile },
+            { mobile: Number(mobile) },
+            { mobile: String(mobile) },
+          ],
+        },
+      ],
     });
     if (existingCandidateMobile) {
-      delete candidate.mobile;
-    } else {
-      candidate.mobile = mobile;
+      return res.json({
+        error: "Mobile number already used by another candidate",
+        constraint: "candidates_mobile_unique",
+      });
     }
-  } else if (mobileRaw) {
-    // keep typed value if not 10 digits yet — frontend validates; don't wipe
-    candidate.mobile = mobileRaw;
+    candidate.mobile = mobile;
+  } else if (candidate.mobile !== undefined && candidate.mobile !== null && String(candidate.mobile).trim() !== "") {
+    return res.json({
+      error: "Please enter a valid 10-digit mobile number",
+    });
   } else {
     delete candidate.mobile;
+  }
+
+  if (alternateMobile && alternateMobile.length === 10) {
+    candidate.alternateMobile = alternateMobile;
   }
 
   if (candidate?.interviewerId == "null") {
