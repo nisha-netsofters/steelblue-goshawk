@@ -20,6 +20,18 @@ const isApiEnabled = (api) => {
 const getApiAudience = (api) => {
   if (api?.id === "msg-client-plan" || api?.audience === "plan") return "plan";
   if (api?.id === "msg-new-job-bestmatch" || api?.audience === "job") return "job";
+  if (
+    api?.id === "msg-interview-scheduled" ||
+    api?.audience === "interview_schedule"
+  ) {
+    return "interview_schedule";
+  }
+  if (
+    api?.id === "msg-interview-status" ||
+    api?.audience === "interview_status"
+  ) {
+    return "interview_status";
+  }
   if (api?.id === "msg-client-welcome") return "client";
   if (
     api?.id === "msg-customer-welcome" ||
@@ -375,6 +387,206 @@ const buildCandidateJobDetailsLink = (c, jobId) => {
   return `${getFrontendBaseUrl()}/login?redirect=${encodeURIComponent(jobPath)}`;
 };
 
+/** Candidate My Interviews page — login first, then open /{slug}/my-interviews */
+const buildCandidateMyInterviewsLink = (c) => {
+  const path = `/${getAgencySlug(c)}/my-interviews`;
+  return `${getFrontendBaseUrl()}/login?redirect=${encodeURIComponent(path)}`;
+};
+
+/** URL button suffix for WhatsApp templates with a static login base URL */
+const buildMyInterviewsButtonSuffix = (c) => {
+  const custom = pickStr(process.env.WHATSAPP_MY_INTERVIEWS_BUTTON_SUFFIX);
+  if (custom) return custom;
+
+  const slug = getAgencySlug(c);
+  const mode = String(
+    process.env.WHATSAPP_MY_INTERVIEWS_BUTTON_MODE || "relative"
+  ).toLowerCase();
+
+  // Meta template: https://{site}/{{1}}  →  uniqueworld/my-interviews
+  if (mode === "absolute" || mode === "root_append") {
+    return `${slug}/my-interviews`;
+  }
+
+  // Meta template: https://{site}/login?redirect=%2F{{1}}
+  // → uniqueworld%2Fmy-interviews (login then open My Interviews)
+  if (mode === "login_redirect") {
+    return encodeURIComponent(`${slug}/my-interviews`);
+  }
+
+  // Default: Meta template copied from candidate welcome uses
+  // .../uniqueworld/candidate/{{1}} — climb to sibling route.
+  return "../my-interviews";
+};
+
+const formatInterviewDateValue = (interview) => {
+  const raw = pickStr(interview?.date, interview?.joiningDate);
+  if (!raw) return "-";
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toLocaleDateString("en-IN", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
+  }
+  return raw;
+};
+
+const formatInterviewTimeValue = (interview) => {
+  const raw = interview?.time;
+  if (!raw) return "-";
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toLocaleTimeString("en-IN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    });
+  }
+  return String(raw).trim() || "-";
+};
+
+const INTERVIEW_STATUS_LABELS = {
+  available: "Available",
+  shortlisted: "Shortlisted",
+  trail: "Trail",
+  reschedule: "Reschedule",
+  scheduled: "Scheduled",
+  completed: "Completed",
+  hired: "Hired",
+  rejected: "Rejected",
+  hold: "Hold",
+  "CV Shared": "CV Shared",
+  "Not Joined It": "Not Joined It",
+  Left: "Left",
+};
+
+const formatInterviewStatusValue = (status) =>
+  INTERVIEW_STATUS_LABELS[status] || pickStr(status) || "-";
+
+const INTERVIEW_TYPE_LABELS = {
+  personal: "Personal",
+  virtual: "Virtual",
+  telephonic: "Telephonic",
+};
+
+const formatInterviewTypeValue = (type) =>
+  INTERVIEW_TYPE_LABELS[String(type || "").toLowerCase()] ||
+  pickStr(type) ||
+  "-";
+
+const formatSalaryAmount = (salary) => {
+  if (salary == null || salary === "") return "";
+  const num = Number(salary);
+  if (!Number.isFinite(num)) return String(salary).trim();
+  return `₹${new Intl.NumberFormat("en-IN").format(num)}`;
+};
+
+const formatJobSalaryRange = (source = {}, { labeled = false } = {}) => {
+  const start =
+    source?.jobSalary ??
+    source?.salaryRangeStart ??
+    source?.jobOpening?.salaryRangeStart;
+  const end =
+    source?.salaryRangeEnd ?? source?.jobOpening?.salaryRangeEnd;
+  const startStr = formatSalaryAmount(start);
+  const endStr = formatSalaryAmount(end);
+  let value = "To be discussed";
+  if (startStr && endStr) value = `${startStr} - ${endStr}`;
+  else if (startStr) value = startStr;
+  else if (endStr) value = endStr;
+  return labeled ? `Salary: ${value}` : value;
+};
+
+const formatJobExperienceValue = (raw) => {
+  if (!raw) return "Not specified";
+  if (/year/i.test(String(raw))) {
+    const match = String(raw).match(/(\d+(?:\.\d+)?)/);
+    if (match) {
+      const num = Number(match[1]);
+      if (Number.isFinite(num)) {
+        return num === 1 ? "1 year" : `${num} years`;
+      }
+    }
+    return String(raw).trim();
+  }
+  const num = Number(raw);
+  if (Number.isFinite(num)) {
+    return num === 1 ? "1 year" : `${num} years`;
+  }
+  return `${String(raw).trim()} years`;
+};
+
+const formatJobExperience = (source = {}, { labeled = false } = {}) => {
+  const raw = pickStr(
+    source?.jobExperience,
+    source?.minExperienceYears,
+    source?.jobOpening?.minExperienceYears,
+    source?.experienceRequired
+  );
+  const value = formatJobExperienceValue(raw);
+  return labeled ? `Experience: ${value}` : value;
+};
+
+exports.buildInterviewWhatsappPerson = (
+  candidateInput,
+  interview = {},
+  extras = {}
+) => {
+  const candidate =
+    candidateInput && typeof candidateInput.toObject === "function"
+      ? candidateInput.toObject()
+      : candidateInput || {};
+  const interviewDoc =
+    interview && typeof interview.toObject === "function"
+      ? interview.toObject()
+      : interview || {};
+
+  const companyName = pickStr(
+    extras.companyName,
+    interviewDoc.client?.companyName,
+    interviewDoc.onBoarding?.companyName,
+    interviewDoc.companyName
+  );
+  const interviewStatusRaw =
+    extras.interviewStatus ||
+    interviewDoc.candidate?.interviewStatus ||
+    interviewDoc.interviewStatus;
+  const agencySlug = pickStr(
+    candidate._agencySlug,
+    candidate.agencySlug,
+    candidate.slug,
+    extras.agencySlug
+  );
+  const slugPerson = {
+    ...candidate,
+    _agencySlug: agencySlug || "uniqueworld",
+  };
+
+  return {
+    ...candidate,
+    id: candidate.id || candidate._id,
+    firstname: getCandidateFirstName(candidate),
+    lastname: getCandidateLastName(candidate),
+    mobile: pickStr(candidate.mobile, candidate.phone, candidate.phoneNumber),
+    email: pickStr(candidate.email),
+    agencyId: candidate.agencyId,
+    _agencySlug: agencySlug || "uniqueworld",
+    agencySlug: agencySlug || "uniqueworld",
+    slug: agencySlug || "uniqueworld",
+    interviewCompany: companyName || "-",
+    interviewDate: formatInterviewDateValue(interviewDoc),
+    interviewTime: formatInterviewTimeValue(interviewDoc),
+    interviewType: formatInterviewTypeValue(interviewDoc.interviewType),
+    interviewStatus: interviewStatusRaw,
+    interviewStatusLabel: formatInterviewStatusValue(interviewStatusRaw),
+    myInterviewsLink: buildCandidateMyInterviewsLink(slugPerson),
+    myInterviewsButton: buildMyInterviewsButtonSuffix(slugPerson),
+    interview: interviewDoc,
+  };
+};
+
 /** Public registration form — candidate can continue / edit (`/{slug}/candidate/apply?cid=`) */
 const buildCandidateRegistrationLink = (c) => {
   const id = getCandidateId(c);
@@ -434,11 +646,97 @@ const PLACEHOLDER_MAP = {
       c?.jobOpening?.minExperienceYears,
       c?.experienceRequired
     ),
+  "{{job_experience}}": (c) => formatJobExperience(c, { labeled: false }),
+  "{{jobExperience}}": (c) => formatJobExperience(c, { labeled: false }),
   "{{salaryRangeStart}}": (c) =>
     pickStr(c?.salaryRangeStart, c?.jobOpening?.salaryRangeStart),
   "{{salaryRangeEnd}}": (c) =>
     pickStr(c?.salaryRangeEnd, c?.jobOpening?.salaryRangeEnd),
+  "{{job_salary}}": (c) => formatJobSalaryRange(c, { labeled: false }),
+  "{{jobSalary}}": (c) => formatJobSalaryRange(c, { labeled: false }),
+  "{{salary}}": (c) => formatJobSalaryRange(c, { labeled: false }),
+  "{{jobIndustry}}": (c) =>
+    pickStr(
+      c?.jobIndustry,
+      c?.industry,
+      c?.industryCategory,
+      c?.jobOpening?.industryCategory,
+      c?.jobOpening?.industries?.industryCategory
+    ),
+  "{{industry}}": (c) =>
+    pickStr(
+      c?.jobIndustry,
+      c?.industry,
+      c?.industryCategory,
+      c?.jobOpening?.industryCategory,
+      c?.jobOpening?.industries?.industryCategory
+    ),
+  "{{jobSubCategory}}": (c) =>
+    pickStr(
+      c?.jobSubCategory,
+      c?.job_sub_category,
+      c?.jobOpening?.jobSubCategory,
+      c?.jobOpening?.jobSubCategoryName
+    ),
+  "{{job_sub_category}}": (c) =>
+    pickStr(
+      c?.jobSubCategory,
+      c?.job_sub_category,
+      c?.jobOpening?.jobSubCategory,
+      c?.jobOpening?.jobSubCategoryName
+    ),
+  "{{jobCity}}": (c) =>
+    pickStr(c?.jobCity, c?.jobOpening?.city, c?.jobLocation),
+  "{{jobArea}}": (c) => pickStr(c?.jobArea, c?.area, c?.jobOpening?.area),
+  "{{jobEmploymentType}}": (c) =>
+    pickStr(
+      c?.jobEmploymentType,
+      c?.employmentType,
+      c?.jobOpening?.employmentType
+    ),
+  "{{employmentType}}": (c) =>
+    pickStr(
+      c?.jobEmploymentType,
+      c?.employmentType,
+      c?.jobOpening?.employmentType
+    ),
+  "{{jobQualification}}": (c) =>
+    pickStr(
+      c?.jobQualification,
+      c?.qualification,
+      c?.jobOpening?.qualification
+    ),
+  "{{qualification}}": (c) =>
+    pickStr(
+      c?.jobQualification,
+      c?.qualification,
+      c?.jobOpening?.qualification
+    ),
+  "{{jobDescription}}": (c) =>
+    pickStr(
+      c?.jobDescription,
+      c?.jobSummary,
+      c?.jobOpening?.jobDescription,
+      c?.jobOpening?.jobSummary
+    ),
+  "{{jobSummary}}": (c) =>
+    pickStr(
+      c?.jobDescription,
+      c?.jobSummary,
+      c?.jobOpening?.jobDescription,
+      c?.jobOpening?.jobSummary
+    ),
   "{{jobDetailsLink}}": (c) => pickStr(c?.jobDetailsLink),
+  "{{interview_company}}": (c) => pickStr(c?.interviewCompany, c?.companyName),
+  "{{interview_date}}": (c) => pickStr(c?.interviewDate),
+  "{{interview_time}}": (c) => pickStr(c?.interviewTime),
+  "{{interview_type}}": (c) => pickStr(c?.interviewType),
+  "{{interview_status}}": (c) =>
+    pickStr(c?.interviewStatusLabel, c?.interviewStatus),
+  "{{my_interviews_link}}": (c) =>
+    pickStr(c?.myInterviewsLink, buildCandidateMyInterviewsLink(c)),
+  "{{my_interviews_button}}": (c) =>
+    pickStr(c?.myInterviewsButton, buildMyInterviewsButtonSuffix(c)),
 };
 
 const resolveByToken = (token, candidate) => {
@@ -486,6 +784,18 @@ const sanitizeWhatsAppParamText = (raw, { maxLen = 200 } = {}) => {
 const resolvePlaceholders = (text, candidate, options = {}) => {
   if (typeof text !== "string" || !text) return text;
   let resolved = normalizePlaceholderSyntax(text).trim();
+  const LONG_PARAM_TOKENS = new Set([
+    "jobdescription",
+    "jobsummary",
+    "unfilled_fields",
+    "unfilled_fields_list",
+    "unfilled_fields_by_section",
+  ]);
+  const paramMaxLen = (tokenKey, value) => {
+    if (/^https?:\/\//i.test(String(value || "").trim())) return 500;
+    if (LONG_PARAM_TOKENS.has(String(tokenKey || "").toLowerCase())) return 900;
+    return 200;
+  };
 
   // CRITICAL: never treat bare tokens as placeholders.
   // Template name can be literally "unfilled_fields" — that must stay as-is.
@@ -497,8 +807,9 @@ const resolvePlaceholders = (text, candidate, options = {}) => {
     PLACEHOLDER_MAP[`{{${resolved.toLowerCase()}}}`]
   ) {
     const tokenVal = resolveByToken(resolved, candidate);
-    const isUrl = /^https?:\/\//i.test(String(tokenVal || "").trim());
-    return sanitizeWhatsAppParamText(tokenVal, { maxLen: isUrl ? 500 : 200 });
+    return sanitizeWhatsAppParamText(tokenVal, {
+      maxLen: paramMaxLen(resolved, tokenVal),
+    });
   }
 
   // No {{...}} at all → leave structural values untouched (template names, en, whatsapp, etc.)
@@ -506,16 +817,19 @@ const resolvePlaceholders = (text, candidate, options = {}) => {
     return text;
   }
 
+  // Single-placeholder fields (e.g. {{jobDescription}}) keep longer max length
+  const singleToken = resolved.match(/^\{\{\s*([a-z0-9_]+)\s*\}\}$/i);
   Object.entries(PLACEHOLDER_MAP).forEach(([key, fn]) => {
-    // Escape replacement so $ in values don't break String.replace
     const replacement = String(fn(candidate) ?? "").replace(/\$/g, "$$$$");
     resolved = resolved.replace(
       new RegExp(key.replace(/[{}]/g, "\\$&"), "gi"),
       replacement
     );
   });
-  const isUrl = /^https?:\/\//i.test(resolved.trim());
-  return sanitizeWhatsAppParamText(resolved, { maxLen: isUrl ? 500 : 200 });
+  const tokenKey = singleToken?.[1] || "";
+  return sanitizeWhatsAppParamText(resolved, {
+    maxLen: paramMaxLen(tokenKey, resolved),
+  });
 };
 
 const deepResolvePlaceholders = (value, candidate, options = {}) => {
@@ -624,7 +938,20 @@ const isSampleCurlPlaceholder = (text) =>
  */
 const resolveUrlButtonSuffix = (rawText, candidate) => {
   let text = rawText == null ? "" : String(rawText).trim();
-  if (!text || isSampleCurlPlaceholder(text)) return "/";
+  const rawLower = text.toLowerCase();
+  const isMyInterviewsButton =
+    /my[-_]?interviews[-_]?button/i.test(rawLower) ||
+    rawLower === "{{my_interviews_button}}";
+
+  if (isMyInterviewsButton) {
+    return buildMyInterviewsButtonSuffix(candidate || {});
+  }
+
+  if (!text || isSampleCurlPlaceholder(text)) {
+    return isMyInterviewsButton
+      ? buildMyInterviewsButtonSuffix(candidate || {})
+      : "/";
+  }
 
   if (/^\{\{[^}]+\}\}$/.test(text) || PLACEHOLDER_MAP[`{{${text.toLowerCase()}}}`]) {
     text = resolveByToken(text, candidate || {}) || "";
@@ -633,6 +960,10 @@ const resolveUrlButtonSuffix = (rawText, candidate) => {
   }
 
   text = String(text || "").trim();
+  if (/my[-_]?interviews/i.test(text)) {
+    return buildMyInterviewsButtonSuffix(candidate || {});
+  }
+
   if (
     !text ||
     isSampleCurlPlaceholder(text) ||
@@ -1117,6 +1448,16 @@ const MSG_CONFIG_SLOTS_BACKEND = [
     audience: "job",
     name: "New Job Best Match",
   },
+  {
+    id: "msg-interview-scheduled",
+    audience: "interview_schedule",
+    name: "Interview Scheduled",
+  },
+  {
+    id: "msg-interview-status",
+    audience: "interview_status",
+    name: "Interview Status Updated",
+  },
 ];
 
 const remapLegacySavedApi = (api) => {
@@ -1187,7 +1528,12 @@ const normalizeApisToSlots = (saved) => {
       usedIndexes.add(matchIdx);
       return mapApiRow(list[matchIdx], slot);
     }
-    if (slot.audience === "plan" || slot.audience === "job") {
+    if (
+      slot.audience === "plan" ||
+      slot.audience === "job" ||
+      slot.audience === "interview_schedule" ||
+      slot.audience === "interview_status"
+    ) {
       return emptySlotApi(slot);
     }
     const match = pickUnused();
@@ -1770,12 +2116,69 @@ const sendClientLikeWhatsapp = async (clientInput, trigger, logLabel) => {
       ),
       jobLocation: pickStr(
         client.jobLocation,
-        client.jobOpening?.jobLocation
+        client.jobOpening?.jobLocation,
+        client.jobCity
+      ),
+      jobCity: pickStr(
+        client.jobCity,
+        client.jobOpening?.city,
+        client.jobLocation
+      ),
+      jobArea: pickStr(client.jobArea, client.area, client.jobOpening?.area),
+      jobIndustry: pickStr(
+        client.jobIndustry,
+        client.industry,
+        client.industryCategory
+      ),
+      industry: pickStr(
+        client.jobIndustry,
+        client.industry,
+        client.industryCategory
+      ),
+      industryCategory: pickStr(
+        client.jobIndustry,
+        client.industry,
+        client.industryCategory
+      ),
+      jobSubCategory: pickStr(client.jobSubCategory, client.job_sub_category),
+      jobEmploymentType: pickStr(
+        client.jobEmploymentType,
+        client.employmentType,
+        client.jobOpening?.employmentType
+      ),
+      employmentType: pickStr(
+        client.jobEmploymentType,
+        client.employmentType,
+        client.jobOpening?.employmentType
+      ),
+      jobQualification: pickStr(
+        client.jobQualification,
+        client.qualification,
+        client.jobOpening?.qualification
+      ),
+      qualification: pickStr(
+        client.jobQualification,
+        client.qualification,
+        client.jobOpening?.qualification
+      ),
+      jobDescription: pickStr(
+        client.jobDescription,
+        client.jobSummary,
+        client.jobOpening?.jobDescription,
+        client.jobOpening?.jobSummary
+      ),
+      jobSummary: pickStr(
+        client.jobSummary,
+        client.jobDescription,
+        client.jobOpening?.jobSummary,
+        client.jobOpening?.jobDescription
       ),
       minExperienceYears: pickStr(
         client.minExperienceYears,
         client.jobOpening?.minExperienceYears
       ),
+      // Template job_create_4 already has "Experience:" / "Salary:" labels
+      jobExperience: formatJobExperience(client, { labeled: false }),
       salaryRangeStart: pickStr(
         client.salaryRangeStart,
         client.jobOpening?.salaryRangeStart
@@ -1784,9 +2187,78 @@ const sendClientLikeWhatsapp = async (clientInput, trigger, logLabel) => {
         client.salaryRangeEnd,
         client.jobOpening?.salaryRangeEnd
       ),
+      jobSalary: formatJobSalaryRange(client, { labeled: false }),
       jobDetailsLink: pickStr(client.jobDetailsLink),
       jobOpening: client.jobOpening,
     };
+  } else if (
+    trigger === "interview_schedule" ||
+    trigger === "interview_status"
+  ) {
+    // buildInterviewWhatsappPerson already merged candidate + interview fields —
+    // do NOT remap as client/plan (that wipes interview_* placeholders).
+    person = {
+      ...client,
+      id: client.id || client._id,
+      firstname: pickStr(
+        client.firstname,
+        client.firstName,
+        client.first_name,
+        getCandidateFirstName(client)
+      ),
+      lastname: pickStr(
+        client.lastname,
+        client.lastName,
+        client.last_name,
+        getCandidateLastName(client)
+      ),
+      name: pickStr(
+        client.name,
+        getCandidateFullName(client)
+      ),
+      mobile: pickStr(client.mobile, client.phone, client.phoneNumber),
+      email: pickStr(client.email),
+      city: pickStr(client.city),
+      agencyId: client.agencyId,
+      _agencySlug: pickStr(client._agencySlug, client.agencySlug, client.slug),
+      agencySlug: pickStr(client.agencySlug, client.slug, client._agencySlug),
+      slug: pickStr(client.slug, client.agencySlug, client._agencySlug),
+      interviewCompany: pickStr(client.interviewCompany),
+      interviewDate: pickStr(client.interviewDate),
+      interviewTime: pickStr(client.interviewTime),
+      interviewType: pickStr(client.interviewType),
+      interviewStatus: pickStr(client.interviewStatus),
+      interviewStatusLabel: pickStr(
+        client.interviewStatusLabel,
+        formatInterviewStatusValue(client.interviewStatus)
+      ),
+      myInterviewsLink: pickStr(
+        client.myInterviewsLink,
+        buildCandidateMyInterviewsLink(client)
+      ),
+      myInterviewsButton: pickStr(
+        client.myInterviewsButton,
+        buildMyInterviewsButtonSuffix(client)
+      ),
+      interview: client.interview,
+    };
+    console.info(
+      `${logLabel} person fields =>`,
+      "id:",
+      person.id,
+      "fullname:",
+      getCandidateFullName(person) || "(empty)",
+      "company:",
+      person.interviewCompany || "(empty)",
+      "date:",
+      person.interviewDate || "(empty)",
+      "time:",
+      person.interviewTime || "(empty)",
+      "type:",
+      person.interviewType || "(empty)",
+      "status:",
+      person.interviewStatusLabel || person.interviewStatus || "(empty)"
+    );
   } else {
     person = {
       id: client.id || client._id,
@@ -1912,6 +2384,40 @@ exports.sendNewJobBestMatchWhatsapp = async (candidateInput, jobOpening = {}) =>
   };
   const jobDetailsLink = buildCandidateJobDetailsLink(personForLink, jobId);
 
+  let industryName = pickStr(
+    job.industryCategory,
+    job.industries?.industryCategory,
+    job.industry
+  );
+  if (!industryName && job.industriesId) {
+    try {
+      const Industries = require("../../models-v2/industries_Mongoose");
+      const ind = await Industries.findOne({ id: String(job.industriesId) })
+        .select("industryCategory")
+        .lean();
+      industryName = pickStr(ind?.industryCategory);
+    } catch (_) {}
+  }
+
+  let jobSubCategoryName = pickStr(
+    job.jobSubCategory,
+    job.jobSubCategoryName,
+    typeof job.jobSubCategory === "object"
+      ? job.jobSubCategory?.jobSubCategory
+      : ""
+  );
+  if (!jobSubCategoryName && job.jobSubCategoryId) {
+    try {
+      const JobSubCategory = require("../../models-v2/jobSubCategory_Mongoose");
+      const sub = await JobSubCategory.findOne({
+        id: String(job.jobSubCategoryId),
+      })
+        .select("jobSubCategory")
+        .lean();
+      jobSubCategoryName = pickStr(sub?.jobSubCategory);
+    } catch (_) {}
+  }
+
   const person = {
     ...candidate,
     id: candidate.id || candidate._id,
@@ -1926,14 +2432,75 @@ exports.sendNewJobBestMatchWhatsapp = async (candidateInput, jobOpening = {}) =>
     slug: agencySlug || "uniqueworld",
     jobTitle: pickStr(job.designation, job.jobTitle),
     designation: pickStr(job.designation, job.jobTitle),
-    jobLocation: pickStr(job.jobLocation),
+    jobLocation: pickStr(job.jobLocation, job.city, job.area),
+    jobCity: pickStr(job.city, job.jobLocation),
+    jobArea: pickStr(job.area),
+    jobIndustry: industryName,
+    industry: industryName,
+    industryCategory: industryName,
+    jobSubCategory: jobSubCategoryName,
+    jobEmploymentType: pickStr(job.employmentType),
+    employmentType: pickStr(job.employmentType),
+    jobQualification: pickStr(job.qualification),
+    qualification: pickStr(job.qualification),
+    jobDescription: pickStr(job.jobDescription, job.jobSummary),
+    jobSummary: pickStr(job.jobSummary, job.jobDescription),
     minExperienceYears: pickStr(job.minExperienceYears),
+    jobExperience: formatJobExperience(
+      {
+        minExperienceYears: job.minExperienceYears,
+        jobOpening: job,
+      },
+      { labeled: false }
+    ),
     salaryRangeStart: pickStr(job.salaryRangeStart),
     salaryRangeEnd: pickStr(job.salaryRangeEnd),
+    jobSalary: formatJobSalaryRange(
+      {
+        salaryRangeStart: job.salaryRangeStart,
+        salaryRangeEnd: job.salaryRangeEnd,
+        jobOpening: job,
+      },
+      { labeled: false }
+    ),
     jobDetailsLink,
     jobOpening: job,
   };
 
   return sendClientLikeWhatsapp(person, "job", "New Job Best Match Msg API");
 };
+
+/**
+ * Interview create → Super Admin Interview Scheduled cURL (with My Interviews button).
+ */
+exports.sendInterviewScheduledWhatsapp = async (
+  candidateInput,
+  interview = {},
+  extras = {}
+) =>
+  sendClientLikeWhatsapp(
+    exports.buildInterviewWhatsappPerson(candidateInput, interview, extras),
+    "interview_schedule",
+    "Interview Scheduled Msg API"
+  );
+
+/**
+ * Interview status change → Super Admin Interview Status cURL (no button).
+ */
+exports.sendInterviewStatusWhatsapp = async (
+  candidateInput,
+  interview = {},
+  extras = {}
+) =>
+  sendClientLikeWhatsapp(
+    exports.buildInterviewWhatsappPerson(candidateInput, interview, {
+      ...extras,
+      interviewStatus:
+        extras.interviewStatus ||
+        interview?.candidate?.interviewStatus ||
+        interview?.interviewStatus,
+    }),
+    "interview_status",
+    "Interview Status Msg API"
+  );
 
