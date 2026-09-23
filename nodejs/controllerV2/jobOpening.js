@@ -804,6 +804,12 @@ const canAssignRecruiter = (roleName) => roleName === "Admin";
 const canPublishOrArchive = (roleName) =>
   roleName === "Admin" || roleName === "Recruiter";
 
+/** Publish job + Best Match notify (Admin / Recruiter / Client own jobs). */
+const canPublishJobStatus = (roleName) =>
+  roleName === "Admin" ||
+  roleName === "Recruiter" ||
+  roleName === "Client";
+
 const canDeleteJobOpening = (roleName) =>
   roleName === "Admin" || roleName === "Recruiter";
 
@@ -1124,9 +1130,22 @@ const notifyBestMatchCandidates = async (
             id: jobOpening.id,
             designation: jobOpening.designation,
             jobLocation: jobOpening.jobLocation,
+            city: jobOpening.city,
+            area: jobOpening.area,
             minExperienceYears: jobOpening.minExperienceYears,
             salaryRangeStart: jobOpening.salaryRangeStart,
             salaryRangeEnd: jobOpening.salaryRangeEnd,
+            salary: jobOpening.salary,
+            employmentType: jobOpening.employmentType,
+            qualification: jobOpening.qualification,
+            jobDescription: jobOpening.jobDescription,
+            jobSummary: jobOpening.jobSummary,
+            jobCategoryId: jobOpening.jobCategoryId,
+            jobSubCategoryId: jobOpening.jobSubCategoryId,
+            jobCategory: jobOpening.jobCategory,
+            jobSubCategory: jobOpening.jobSubCategory,
+            jobCategoryName: jobOpening.jobCategoryName,
+            jobSubCategoryName: jobOpening.jobSubCategoryName,
           },
         });
       } catch (emailErr) {
@@ -2109,11 +2128,17 @@ exports.updateJobPostingStatus = async (req, res) => {
       return res.status(403).json({ success: false, msg: "Permission denied." });
     }
 
-    if (postingStatus === "published" || postingStatus === "archived") {
-      if (!canPublishOrArchive(roleName)) {
+    if (postingStatus === "published") {
+      if (!canPublishJobStatus(roleName)) {
         return res.status(403).json({
           success: false,
-          msg: "Only Admin or Recruiter can publish or archive jobs.",
+          msg: "Only Admin, Recruiter, or Client can publish jobs.",
+        });
+      }
+      if (roleName === "Client" && !isOwner) {
+        return res.status(403).json({
+          success: false,
+          msg: "You can only publish your own jobs.",
         });
       }
       if (
@@ -2125,6 +2150,24 @@ exports.updateJobPostingStatus = async (req, res) => {
         return res.status(403).json({
           success: false,
           msg: "You can only publish your own or assigned jobs.",
+        });
+      }
+    } else if (postingStatus === "archived") {
+      if (!canPublishOrArchive(roleName)) {
+        return res.status(403).json({
+          success: false,
+          msg: "Only Admin or Recruiter can archive jobs.",
+        });
+      }
+      if (
+        roleName !== "Admin" &&
+        isStaffRole(roleName) &&
+        !isOwner &&
+        !isAssigned
+      ) {
+        return res.status(403).json({
+          success: false,
+          msg: "You can only archive your own or assigned jobs.",
         });
       }
     } else if (postingStatus === "closed") {

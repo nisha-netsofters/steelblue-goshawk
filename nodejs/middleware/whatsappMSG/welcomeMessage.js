@@ -484,38 +484,54 @@ const formatSalaryAmount = (salary) => {
 };
 
 const formatJobSalaryRange = (source = {}, { labeled = false } = {}) => {
-  const start =
-    source?.jobSalary ??
-    source?.salaryRangeStart ??
-    source?.jobOpening?.salaryRangeStart;
-  const end =
-    source?.salaryRangeEnd ?? source?.jobOpening?.salaryRangeEnd;
-  const startStr = formatSalaryAmount(start);
-  const endStr = formatSalaryAmount(end);
-  let value = "To be discussed";
-  if (startStr && endStr) value = `${startStr} - ${endStr}`;
-  else if (startStr) value = startStr;
-  else if (endStr) value = endStr;
+  // Job form Salary text (e.g. "25000 - 40000 / month") — send as entered
+  const rawSalary = pickStr(source?.salary, source?.jobOpening?.salary);
+  if (rawSalary) {
+    return labeled ? `Salary: ${rawSalary}` : rawSalary;
+  }
+  // Legacy jobs: fall back to start/end numbers as plain text
+  const start = pickStr(
+    source?.salaryRangeStart,
+    source?.jobOpening?.salaryRangeStart
+  );
+  const end = pickStr(
+    source?.salaryRangeEnd,
+    source?.jobOpening?.salaryRangeEnd
+  );
+  let value = "-";
+  if (start && end && start !== end) value = `${start} - ${end}`;
+  else if (start) value = start;
+  else if (end) value = end;
   return labeled ? `Salary: ${value}` : value;
 };
 
 const formatJobExperienceValue = (raw) => {
-  if (!raw) return "Not specified";
-  if (/year/i.test(String(raw))) {
-    const match = String(raw).match(/(\d+(?:\.\d+)?)/);
+  if (!raw) return "-";
+  const str = String(raw).trim();
+  if (!str) return "-";
+  // Keep job form buckets as readable ranges (do not collapse "1-3 year" → "1 year")
+  if (/^\d+\s*-\s*\d+\s*year/i.test(str)) {
+    return str.replace(/\byear\b/i, "years");
+  }
+  if (/year\s*above/i.test(str)) {
+    const n = str.match(/(\d+(?:\.\d+)?)/);
+    return n ? `${n[1]} years above` : str;
+  }
+  if (/year/i.test(str)) {
+    const match = str.match(/(\d+(?:\.\d+)?)/);
     if (match) {
       const num = Number(match[1]);
       if (Number.isFinite(num)) {
         return num === 1 ? "1 year" : `${num} years`;
       }
     }
-    return String(raw).trim();
+    return str;
   }
   const num = Number(raw);
   if (Number.isFinite(num)) {
     return num === 1 ? "1 year" : `${num} years`;
   }
-  return `${String(raw).trim()} years`;
+  return `${str} years`;
 };
 
 const formatJobExperience = (source = {}, { labeled = false } = {}) => {
@@ -527,6 +543,54 @@ const formatJobExperience = (source = {}, { labeled = false } = {}) => {
   );
   const value = formatJobExperienceValue(raw);
   return labeled ? `Experience: ${value}` : value;
+};
+
+const pickJobCategoryName = (source = {}) => {
+  const nested =
+    source?.jobCategory && typeof source.jobCategory === "object"
+      ? source.jobCategory.jobCategory || source.jobCategory.name
+      : source?.jobCategory;
+  const openingNested =
+    source?.jobOpening?.jobCategory &&
+    typeof source.jobOpening.jobCategory === "object"
+      ? source.jobOpening.jobCategory.jobCategory ||
+        source.jobOpening.jobCategory.name
+      : source?.jobOpening?.jobCategory;
+  return pickStr(
+    source?.jobCategoryName,
+    nested,
+    source?.job_category,
+    openingNested,
+    source?.jobOpening?.jobCategoryName
+  );
+};
+
+const pickJobSubCategoryName = (source = {}) => {
+  const nested =
+    source?.jobSubCategory && typeof source.jobSubCategory === "object"
+      ? source.jobSubCategory.jobSubCategory || source.jobSubCategory.name
+      : source?.jobSubCategory;
+  const openingNested =
+    source?.jobOpening?.jobSubCategory &&
+    typeof source.jobOpening.jobSubCategory === "object"
+      ? source.jobOpening.jobSubCategory.jobSubCategory ||
+        source.jobOpening.jobSubCategory.name
+      : source?.jobOpening?.jobSubCategory;
+  return pickStr(
+    nested,
+    source?.job_sub_category,
+    source?.jobSubCategoryName,
+    openingNested,
+    source?.jobOpening?.jobSubCategoryName
+  );
+};
+
+/** "Accounts - Accountant" style for WhatsApp template fields */
+const formatJobCategorySubCategory = (source = {}) => {
+  const cat = pickJobCategoryName(source);
+  const sub = pickJobSubCategoryName(source);
+  if (cat && sub) return `${cat} - ${sub}`;
+  return cat || sub || "";
 };
 
 exports.buildInterviewWhatsappPerson = (
@@ -671,20 +735,12 @@ const PLACEHOLDER_MAP = {
       c?.jobOpening?.industryCategory,
       c?.jobOpening?.industries?.industryCategory
     ),
-  "{{jobSubCategory}}": (c) =>
-    pickStr(
-      c?.jobSubCategory,
-      c?.job_sub_category,
-      c?.jobOpening?.jobSubCategory,
-      c?.jobOpening?.jobSubCategoryName
-    ),
-  "{{job_sub_category}}": (c) =>
-    pickStr(
-      c?.jobSubCategory,
-      c?.job_sub_category,
-      c?.jobOpening?.jobSubCategory,
-      c?.jobOpening?.jobSubCategoryName
-    ),
+  "{{jobSubCategory}}": (c) => pickJobSubCategoryName(c),
+  "{{job_sub_category}}": (c) => pickJobSubCategoryName(c),
+  "{{jobCategory}}": (c) => pickJobCategoryName(c),
+  "{{job_category}}": (c) => pickJobCategoryName(c),
+  "{{jobCategory_jobSubCategory}}": (c) => formatJobCategorySubCategory(c),
+  "{{job_category_sub_category}}": (c) => formatJobCategorySubCategory(c),
   "{{jobCity}}": (c) =>
     pickStr(c?.jobCity, c?.jobOpening?.city, c?.jobLocation),
   "{{jobArea}}": (c) => pickStr(c?.jobArea, c?.area, c?.jobOpening?.area),
@@ -2141,6 +2197,9 @@ const sendClientLikeWhatsapp = async (clientInput, trigger, logLabel) => {
         client.industryCategory
       ),
       jobSubCategory: pickStr(client.jobSubCategory, client.job_sub_category),
+      jobCategory: pickJobCategoryName(client),
+      jobCategoryName: pickJobCategoryName(client),
+      jobCategory_jobSubCategory: formatJobCategorySubCategory(client),
       jobEmploymentType: pickStr(
         client.jobEmploymentType,
         client.employmentType,
@@ -2187,6 +2246,7 @@ const sendClientLikeWhatsapp = async (clientInput, trigger, logLabel) => {
         client.salaryRangeEnd,
         client.jobOpening?.salaryRangeEnd
       ),
+      salary: pickStr(client.salary, client.jobOpening?.salary),
       jobSalary: formatJobSalaryRange(client, { labeled: false }),
       jobDetailsLink: pickStr(client.jobDetailsLink),
       jobOpening: client.jobOpening,
@@ -2418,6 +2478,24 @@ exports.sendNewJobBestMatchWhatsapp = async (candidateInput, jobOpening = {}) =>
     } catch (_) {}
   }
 
+  let jobCategoryName = pickStr(
+    job.jobCategoryName,
+    typeof job.jobCategory === "object"
+      ? job.jobCategory?.jobCategory || job.jobCategory?.name
+      : job.jobCategory
+  );
+  if (!jobCategoryName && job.jobCategoryId) {
+    try {
+      const JobCategory = require("../../models-v2/jobCategory_Mongoose");
+      const cat = await JobCategory.findOne({
+        id: String(job.jobCategoryId),
+      })
+        .select("jobCategory")
+        .lean();
+      jobCategoryName = pickStr(cat?.jobCategory);
+    } catch (_) {}
+  }
+
   const person = {
     ...candidate,
     id: candidate.id || candidate._id,
@@ -2438,7 +2516,13 @@ exports.sendNewJobBestMatchWhatsapp = async (candidateInput, jobOpening = {}) =>
     jobIndustry: industryName,
     industry: industryName,
     industryCategory: industryName,
+    jobCategory: jobCategoryName,
+    jobCategoryName,
     jobSubCategory: jobSubCategoryName,
+    jobCategory_jobSubCategory: formatJobCategorySubCategory({
+      jobCategoryName,
+      jobSubCategory: jobSubCategoryName,
+    }),
     jobEmploymentType: pickStr(job.employmentType),
     employmentType: pickStr(job.employmentType),
     jobQualification: pickStr(job.qualification),
@@ -2455,8 +2539,10 @@ exports.sendNewJobBestMatchWhatsapp = async (candidateInput, jobOpening = {}) =>
     ),
     salaryRangeStart: pickStr(job.salaryRangeStart),
     salaryRangeEnd: pickStr(job.salaryRangeEnd),
+    salary: pickStr(job.salary),
     jobSalary: formatJobSalaryRange(
       {
+        salary: job.salary,
         salaryRangeStart: job.salaryRangeStart,
         salaryRangeEnd: job.salaryRangeEnd,
         jobOpening: job,

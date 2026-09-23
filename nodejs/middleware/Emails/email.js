@@ -122,10 +122,18 @@ const transporter =
     };
 // ZeptoMail only allows sending from verified domains/senders.
 // Set ZEPTO_FROM_EMAIL in .env to a sender address that is verified in ZeptoMail.
+const normalizeFromEmail = (raw) => {
+  const value = String(raw || "").trim();
+  if (!value) return "";
+  if (value.includes("@")) return value;
+  const domain = value.replace(/^@+/, "");
+  return domain ? `no-reply@${domain}` : "";
+};
+
 const FROM_EMAIL =
-  process.env.ZEPTO_FROM_EMAIL ||
-  process.env.REACT_APP_USER ||
-  "no-reply@your-verified-domain.com";
+  normalizeFromEmail(process.env.ZEPTO_FROM_EMAIL) ||
+  normalizeFromEmail(process.env.REACT_APP_USER) ||
+  "no-reply@uniqueworldjobs.com";
 exports.sendEmailLink = async (user) => {
   const filePath = path.join(__dirname, "./tamplates/forgotPassword.html");
   const source = fs.readFileSync(filePath, "utf-8").toString();
@@ -830,31 +838,119 @@ exports.sendNewJobOpeningAlert = async (candidate, emailTo, jobOpening) => {
     jobPath
   )}`;
 
-  const formatSalary = (salary) => {
-    if (salary == null) return "To be discussed";
-    return `₹${new Intl.NumberFormat("en-IN").format(salary)}`;
+  const dash = (value) => {
+    const s = value == null ? "" : String(value).trim();
+    return s || "-";
   };
 
-  // readEmailTemplate() — plain regex replace, cannot handle {{brand.x}} dot notation --
-  // sendEmailWrapper() — used `to:` instead of `bcc:`, inconsistent with all other functions --
-  // handlebars.compile + withBrand() so logo, colors, name all inject correctly --
+  const formatSalaryAmount = (salary) => {
+    if (salary == null || salary === "") return "";
+    const num = Number(salary);
+    if (!Number.isFinite(num)) return String(salary).trim();
+    return String(num);
+  };
+
+  const formatJobSalary = () => {
+    // Same as WhatsApp: prefer Job Create "Salary" text as entered
+    const raw = dash(jobOpening?.salary);
+    if (raw !== "-") return raw;
+    const startStr = formatSalaryAmount(jobOpening?.salaryRangeStart);
+    const endStr = formatSalaryAmount(jobOpening?.salaryRangeEnd);
+    if (startStr && endStr && startStr !== endStr) {
+      return `${startStr} - ${endStr}`;
+    }
+    if (startStr) return startStr;
+    if (endStr) return endStr;
+    return "-";
+  };
+
+  const formatJobExperience = () => {
+    const raw = dash(jobOpening?.minExperienceYears);
+    if (raw === "-") return "-";
+    if (/^\d+\s*-\s*\d+\s*year/i.test(raw)) {
+      return raw.replace(/\byear\b/i, "years");
+    }
+    if (/year\s*above/i.test(raw)) {
+      const n = raw.match(/(\d+(?:\.\d+)?)/);
+      return n ? `${n[1]} years above` : raw;
+    }
+    if (/year/i.test(raw)) return raw;
+    const num = Number(raw);
+    if (Number.isFinite(num)) return num === 1 ? "1 year" : `${num} years`;
+    return `${raw} years`;
+  };
+
+  let jobCategoryName = dash(
+    typeof jobOpening?.jobCategory === "object"
+      ? jobOpening.jobCategory?.jobCategory || jobOpening.jobCategory?.name
+      : jobOpening?.jobCategory || jobOpening?.jobCategoryName
+  );
+  if (jobCategoryName === "-" && jobOpening?.jobCategoryId) {
+    try {
+      const JobCategory = require("../../models-v2/jobCategory_Mongoose");
+      const cat = await JobCategory.findOne({
+        id: String(jobOpening.jobCategoryId),
+      })
+        .select("jobCategory")
+        .lean();
+      jobCategoryName = dash(cat?.jobCategory);
+    } catch (_) {}
+  }
+
+  let jobSubCategoryName = dash(
+    typeof jobOpening?.jobSubCategory === "object"
+      ? jobOpening.jobSubCategory?.jobSubCategory ||
+          jobOpening.jobSubCategory?.name
+      : jobOpening?.jobSubCategory || jobOpening?.jobSubCategoryName
+  );
+  if (jobSubCategoryName === "-" && jobOpening?.jobSubCategoryId) {
+    try {
+      const JobSubCategory = require("../../models-v2/jobSubCategory_Mongoose");
+      const sub = await JobSubCategory.findOne({
+        id: String(jobOpening.jobSubCategoryId),
+      })
+        .select("jobSubCategory")
+        .lean();
+      jobSubCategoryName = dash(sub?.jobSubCategory);
+    } catch (_) {}
+  }
+
+  let jobDetail = "-";
+  if (jobCategoryName !== "-" && jobSubCategoryName !== "-") {
+    jobDetail = `${jobCategoryName} - ${jobSubCategoryName}`;
+  } else if (jobCategoryName !== "-") {
+    jobDetail = jobCategoryName;
+  } else if (jobSubCategoryName !== "-") {
+    jobDetail = jobSubCategoryName;
+  }
+
   const filePath = path.join(__dirname, "./tamplates/newJobOpeningAlert.html");
   const source = fs.readFileSync(filePath, "utf-8").toString();
   const template = handlebars.compile(source);
 
-  const htmlToSend = template(withBrand({
-    candidateFirstName: safeName(candidate?.firstname, candidate?.lastname, "Valued Candidate"),
-    jobTitle: jobOpening?.designation || "a new position",
-    jobLocation: jobOpening?.jobLocation || "Not specified",
-    minExperienceYears: jobOpening?.minExperienceYears != null ? `${jobOpening.minExperienceYears}` : "Not specified",
-    salaryRangeStart: formatSalary(jobOpening?.salaryRangeStart),
-    salaryRangeEnd: formatSalary(jobOpening?.salaryRangeEnd),
-    jobDetailsLink: jobDetailsLink,
-    currentYear: new Date().getFullYear(),
-  }));
+  const htmlToSend = template(
+    withBrand({
+      candidateFirstName: safeName(
+        candidate?.firstname,
+        candidate?.lastname,
+        "Valued Candidate"
+      ),
+      jobTitle: dash(jobOpening?.designation || jobOpening?.jobTitle),
+      jobDetail,
+      jobExperience: formatJobExperience(),
+      jobSalary: formatJobSalary(),
+      jobCity: dash(jobOpening?.city || jobOpening?.jobLocation),
+      jobArea: dash(jobOpening?.area),
+      jobEmploymentType: dash(jobOpening?.employmentType),
+      jobQualification: dash(jobOpening?.qualification),
+      jobDescription: dash(
+        jobOpening?.jobDescription || jobOpening?.jobSummary
+      ),
+      jobDetailsLink,
+      currentYear: new Date().getFullYear(),
+    })
+  );
 
-  // sendEmailWrapper(emailTo, subject, htmlContent) --
-  // transporter.sendMail with bcc: consistent with all other mail functions --
   await transporter.sendMail({
     from: FROM_EMAIL,
     bcc: emailTo,
