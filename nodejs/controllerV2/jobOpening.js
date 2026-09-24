@@ -533,6 +533,52 @@ const buildAgencyMergeFilter = (agencydiv, agencyId, uniqueworld) => {
 const escapeRegex = (value) =>
   String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+/** Split job/candidate skill text into tokens for Best Match scoring. */
+const parseSkillList = (raw) =>
+  String(raw || "")
+    .split(/[,|/\n;]+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 2);
+
+/**
+ * Skills (max 10): proportional — 10 × (matched job skills ÷ job skill count).
+ * Match = case-insensitive contains (e.g. job "Excel" in candidate "MS Excel").
+ * Empty job skills → 0 (no free points).
+ */
+const buildSkillMatchPointsExpr = (jobOpening) => {
+  const skills = parseSkillList(
+    jobOpening?.basicSkill || jobOpening?.preferredSkills || ""
+  );
+  if (!skills.length) return 0;
+
+  const matchFlags = skills.map((skill) => ({
+    $cond: [
+      {
+        $regexMatch: {
+          input: {
+            $toLower: {
+              $toString: { $ifNull: ["$professional.skill", ""] },
+            },
+          },
+          regex: escapeRegex(skill.toLowerCase()),
+          options: "i",
+        },
+      },
+      1,
+      0,
+    ],
+  }));
+
+  return {
+    $multiply: [
+      10,
+      {
+        $divide: [{ $add: matchFlags }, skills.length],
+      },
+    ],
+  };
+};
+
 /**
  * Location points: job create city/state vs candidate city/state (not jobLocation).
  */
@@ -578,9 +624,11 @@ const buildCandidateMatchScoreAddFields = (jobOpening) => {
   const salaryEnd = Number(jobOpening?.salaryRangeEnd);
   const qualification = String(jobOpening?.qualification || "").trim();
   const locationMatch = buildLocationMatchCondition(jobOpening);
+  const skillPointsExpr = buildSkillMatchPointsExpr(jobOpening);
 
-  // Only award points when job field is actually filled AND candidate matches.
-  // Empty / unset / 0-0 salary must NOT give free points.
+  // Scoring (max 70):
+  // Job Category 30 | Salary 10 | Skills 10 | Experience 10 | Location 5 | Qualification 5
+  // Only award points when job field is filled AND candidate matches.
   // Salary points use professional.currentSalary (not expectedsalary).
   const hasSalaryRange =
     Number.isFinite(salaryStart) &&
@@ -609,9 +657,9 @@ const buildCandidateMatchScoreAddFields = (jobOpening) => {
           0,
         ],
       },
-      // Salary (max 20): currentSalary vs job range.
-      // In range → 20; above range end → 0;
-      // below start → only if current >= 60% of start, then 20 * (current / start); else 0.
+      // Salary (max 10): currentSalary vs job range.
+      // In range → 10; above range end → 0;
+      // below start → only if current >= 60% of start, then 10 * (current / start); else 0.
       {
         $let: {
           vars: {
@@ -638,7 +686,7 @@ const buildCandidateMatchScoreAddFields = (jobOpening) => {
                           { $lte: ["$$currentSalary", salaryEnd] },
                         ],
                       },
-                      20,
+                      10,
                       {
                         $cond: [
                           { $gt: ["$$currentSalary", salaryEnd] },
@@ -658,10 +706,10 @@ const buildCandidateMatchScoreAddFields = (jobOpening) => {
                               },
                               {
                                 $min: [
-                                  20,
+                                  10,
                                   {
                                     $multiply: [
-                                      20,
+                                      10,
                                       {
                                         $divide: [
                                           "$$currentSalary",
@@ -684,6 +732,8 @@ const buildCandidateMatchScoreAddFields = (jobOpening) => {
             : 0,
         },
       },
+      // Skills (max 10): proportional match on job basicSkill vs candidate skill
+      skillPointsExpr,
       {
         $cond: [
           hasMinExp
